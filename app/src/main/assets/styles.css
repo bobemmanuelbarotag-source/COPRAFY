@@ -602,6 +602,7 @@ small {
 
 .field small {
   font-size: 11px;
+  font-weight: 400;
 }
 
 input, select, textarea {
@@ -633,6 +634,7 @@ textarea {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   width: 100%;
+  align-items: end;
 }
 
 .form {
@@ -2009,4 +2011,76 @@ textarea {
   * {
     transition: none !important;
   }
+}
+
+/* ---- Slot calendar (schedule new load) ---- */
+.calendar button.full-day {
+  background: #f9dede;
+  color: #a12a2a;
+}
+.calendar button.full-day.selected {
+  background: var(--red);
+  color: #fff;
+}
+.calendar button:disabled:not(.blank) {
+  cursor: not-allowed;
+}
+
+/* ---- Operator multi-select dropdown ---- */
+.multi-select {
+  position: relative;
+}
+.multi-select-btn {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  background: #fff;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--ink);
+}
+.multi-select-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+  padding: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-margin-bottom: 100px;
+}
+.multi-select-menu[hidden] {
+  display: none;
+}
+.operator-card:has(.multi-select-menu:not([hidden])) {
+  margin-bottom: 230px;
+}
+.multi-select-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.multi-select-item:hover {
+  background: #faf2e8;
+}
+.multi-select-item input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  accent-color: var(--brown);
 }

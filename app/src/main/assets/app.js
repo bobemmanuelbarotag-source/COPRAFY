@@ -52,6 +52,8 @@
 
   let role = null, chosenRole = 'head', route = 'roles', selectedId = 'S0231', stack = [];
   let selectedDate = M.date(), calendarMonth = M.date().slice(0, 7);
+  const MAX_TRAYS = 300, PCS_PER_TRAY = 100, MAX_PCS = MAX_TRAYS * PCS_PER_TRAY; // 30,000
+  const LEAD_DAYS = 7; // schedule at least 1 week before harvest/loading
   let reportRange = '7', reportFrom = M.date(-6), reportTo = M.date(), memberSearch = '', memberFilter = 'all', reportSort = 'newest', operationsFilter = 'all';
   let draft = null, editingId = null, modalReturn = null, toastTimer;
   let lang = 'en';
@@ -150,7 +152,7 @@
       time: 'Time',
       farmerMember: 'Farmer-member',
       quantityKg: 'Quantity (pcs)',
-      trayNumbers: 'Tray numbers',
+      trayNumbers: 'Number of trays',
       addFarmerLot: 'Add farmer-lot',
       sampleMoisturePercent: 'Sample moisture (%)',
       notes: 'Notes (optional)',
@@ -304,7 +306,7 @@
       time: 'Oras',
       farmerMember: 'Magsasakang miyembro',
       quantityKg: 'Dami (pcs)',
-      trayNumbers: 'Numero ng mga tray',
+      trayNumbers: 'Bilang ng mga tray',
       addFarmerLot: 'Magdagdag ng lot ng magsasaka',
       sampleMoisturePercent: 'Moisture ng sample (%)',
       notes: 'Mga tala (opsyonal)',
@@ -866,17 +868,16 @@
       </div>
 
       <section class="section">
-        <!-- Gate Pass & Slot Ticket Banner -->
+        <!-- Slot Confirmation Banner -->
         <div class="card" style="background:#f5efe6;border:1px dashed #bfa895;padding:14px;gap:6px;margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.5px">Gate Pass & Slot Confirmation</span>
+            <span style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.5px">Slot Confirmation</span>
             <span class="badge completed" style="font-size:11px">Slot Confirmed</span>
           </div>
           <p style="font-size:12.5px;color:var(--ink);margin:0;line-height:1.45">
-            <strong>Drop-Off Time Window:</strong> ${esc(s.dropoffWindow || '07:00 AM - 08:00 AM')} on ${niceDate(s.date)}<br>
-            <strong>Harvest Date:</strong> ${niceDate(s.harvestDate || s.date)}<br>
-            <strong>Max Tray Capacity:</strong> 8 Trays (800 pcs max) · 100 pcs per tray limit
-          </p>
+            <strong>Loading Date:</strong> ${niceDate(s.date)}<br>
+            <strong>Drop-Off Time Window:</strong> ${esc(s.dropoffWindow || '07:00 AM - 08:00 AM')}<br>
+            <strong>Tray Capacity:</strong> ${MAX_TRAYS} trays (${MAX_PCS.toLocaleString()} pcs max)          </p>
         </div>
 
         ${heading(`${t('farmerLots')} (${s.lots.length})`)}
@@ -1006,115 +1007,120 @@
     return shell(t('activeDryerMonitoring'), body, false, 'status');
   }
 
-  function getDailyCapacity(dateStr, currentEditingId = null) {
-    const daySessions = state.sessions.filter(s => s.id !== currentEditingId && s.status !== 'Completed' && s.date === dateStr);
-    let usedTrays = 0;
-    daySessions.forEach(s => {
-      s.lots.forEach(l => {
-        if (l.trays && l.trays !== 'Pending') {
-          try { usedTrays += M.trays(l.trays).length; } catch (e) { usedTrays += 2; }
-        } else {
-          usedTrays += 2;
-        }
-      });
-    });
-    const maxTrays = 8;
-    const availTrays = Math.max(0, maxTrays - usedTrays);
-    const availPcs = availTrays * 100;
-    const pctUsed = Math.min(100, Math.round((usedTrays / maxTrays) * 100));
-    return {
-      date: dateStr,
-      usedTrays,
-      availTrays,
-      availPcs,
-      pctUsed,
-      isFull: availTrays <= 0
-    };
+function lotTrayCount(l, fromQtyOnly) {
+  const q = Number(l.quantity);
+  if (!fromQtyOnly && l.trays && l.trays !== 'Pending') {
+    try { return M.trays(l.trays).length; } catch (e) {}
   }
+  return Number.isFinite(q) && q > 0 ? Math.ceil(q / PCS_PER_TRAY) : 0;
+}
 
-  function renderCapacitySlotPicker(selectedDateStr) {
-    const baseDate = new Date(selectedDateStr + 'T12:00:00');
-    const days = [];
-    for (let offset = 0; offset < 7; offset++) {
-      const dObj = new Date(baseDate);
-      dObj.setDate(dObj.getDate() + offset);
-      const d = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, '0')}-${String(dObj.getDate()).padStart(2, '0')}`;
-      const cap = getDailyCapacity(d, editingId);
-      days.push({ ...cap, isSelected: d === selectedDateStr });
-    }
+function getDailyCapacity(dateStr, currentEditingId = null, includeDraft = false) {
+  let usedTrays = 0;
+  state.sessions
+    .filter(s => s.id !== currentEditingId && s.status !== 'Completed' && s.date === dateStr)
+    .forEach(s => s.lots.forEach(l => { usedTrays += lotTrayCount(l, false); }));
+  const usedByOthers = usedTrays;
+  if (includeDraft && draft && draft.date === dateStr) {
+    draft.lots.forEach(l => { usedTrays += lotTrayCount(l, true); });
+  }
+  const availTrays = Math.max(0, MAX_TRAYS - usedTrays);
+  return {
+    date: dateStr, usedTrays, usedByOthers, availTrays,
+    availPcs: availTrays * PCS_PER_TRAY,
+    pctUsed: Math.min(100, Math.round((usedTrays / MAX_TRAYS) * 100)),
+    isFull: availTrays <= 0,
+    isOver: usedTrays > MAX_TRAYS
+  };
+}
 
-    return `
-      <div class="card" style="padding:14px;gap:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-          <span style="font-size:13px;font-weight:600;color:var(--brown)">Slot Availability Overview</span>
-          <div style="display:flex;align-items:center;gap:6px">
-            <input type="date" id="slot-custom-date" value="${selectedDateStr}" style="font-size:11.5px;padding:3px 6px;min-height:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:white;width:auto" title="Jump to custom date">
-            <button type="button" class="btn secondary" data-action="shift-slot-prev" style="width:62px;min-height:32px;height:32px;padding:0;font-size:11.5px;text-align:center" title="Previous 7 days">‹ Prev</button>
-            <button type="button" class="btn secondary" data-action="shift-slot-next" style="width:62px;min-height:32px;height:32px;padding:0;font-size:11.5px;text-align:center" title="Next 7 days">Next ›</button>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;width:100%">
-          ${days.map(d => {
-            const dateObj = new Date(d.date + 'T12:00:00');
-            const label = dateObj.toLocaleDateString(lang === 'fil' ? 'fil-PH' : 'en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
-            return `
-              <button type="button" class="chip-btn ${d.isSelected ? 'active' : ''}" data-action="select-date-slot" data-date="${d.date}" style="flex:none;white-space:nowrap;font-size:12px;padding:6px 12px">
-                ${label} ${d.isFull ? '(Full)' : ''}
-              </button>
-            `;
-          }).join('')}
-        </div>
+// Auto-generate tray numbers: 100 pcs = 1 tray, continuing after trays used by other loads that day
+function autoAssignTrays() {
+  let next = getDailyCapacity(draft.date, editingId).usedByOthers + 1;
+  draft.lots.forEach(l => {
+    const n = Math.ceil(Number(l.quantity) / PCS_PER_TRAY);
+    if (n > 0) { l.trays = n === 1 ? `${next}` : `${next}-${next + n - 1}`; next += n; }
+    else l.trays = '';
+  });
+}
+
+function renderSlotCalendar() {
+  const monthKey = draft.calMonth || draft.date.slice(0, 7);
+  const [year, month] = monthKey.split('-').map(Number);
+  const count = new Date(year, month, 0).getDate();
+  const first = new Date(year, month - 1, 1).getDay();
+  const minDate = M.date(LEAD_DAYS);
+  const dayNames = lang === 'fil' ? ['Li','Lu','Ma','Mi','Hu','Bi','Sa'] : ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  return `
+    <div class="card">
+      <strong style="font-size:13px;color:var(--brown)">Slot Availability Overview</strong>
+      <div class="calendar-heading">
+        <button type="button" class="icon-btn" data-action="slot-month" data-delta="-1" aria-label="Previous month">${icon('back')}</button>
+        <strong>${new Date(year, month - 1, 1).toLocaleDateString(lang === 'fil' ? 'fil-PH' : 'en-PH', { month: 'long', year: 'numeric' })}</strong>
+        <button type="button" class="icon-btn" data-action="slot-month" data-delta="1" aria-label="Next month">${icon('right')}</button>
       </div>
-    `;
-  }
+      <div class="calendar">
+        ${dayNames.map(n => `<span>${n}</span>`).join('')}
+        ${Array.from({ length: first }, () => '<button type="button" class="blank" disabled tabindex="-1"></button>').join('')}
+        ${Array.from({ length: count }, (_, i) => {
+          const d = `${monthKey}-${String(i + 1).padStart(2, '0')}`;
+          const cap = getDailyCapacity(d, editingId);
+          const tooSoon = d < minDate && !editingId;
+          const cls = [d === draft.date ? 'selected' : '', cap.usedTrays > 0 ? 'has-load' : '', cap.isFull ? 'full-day' : ''].join(' ');
+          return `<button type="button" class="${cls}" data-action="select-date-slot" data-date="${d}" ${tooSoon ? 'disabled style="opacity:.35"' : ''}>${i + 1}</button>`;
+        }).join('')}
+      </div>
+      <small class="muted">Schedule at least ${LEAD_DAYS} days ahead. Earlier dates are disabled.</small>
+    </div>`;
+}
+
+function renderCapacityCard() {
+  const c = getDailyCapacity(draft.date, editingId, true);
+  return `
+    <div class="card" id="capacity-card" style="padding:14px;gap:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;font-weight:600;color:var(--brown)">Chamber Capacity (${niceDate(draft.date)})</span>
+        <span class="badge ${c.isFull ? 'fault' : 'scheduled'}" style="font-size:11.5px">
+          ${c.isFull ? 'Full Slot' : `${c.availTrays} / ${MAX_TRAYS} Trays Left`}
+        </span>
+      </div>
+      <div style="background:#efe7dc;height:8px;border-radius:4px;overflow:hidden;width:100%">
+        <div style="background:${c.isFull ? 'var(--red)' : 'var(--brown)'};height:100%;width:${c.pctUsed}%;border-radius:4px"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
+        <span>${c.usedTrays} / ${MAX_TRAYS} Trays Occupied</span>
+        <span><strong>${c.availPcs.toLocaleString()} pcs</strong> max left</span>
+      </div>
+      ${c.isOver ? `<p style="font-size:12px;color:#dc2626;margin:2px 0 0">⚠️ Over capacity. Reduce the quantity or pick another date.</p>` : ''}
+    </div>`;
+}
 
   function draftScreen() {
     if (!draft) {
+      const minDate = M.date(LEAD_DAYS);
+      const startDate = (selectedDate && selectedDate >= minDate) ? selectedDate : minDate;
       draft = {
-        date: (selectedDate && selectedDate >= M.date()) ? selectedDate : M.date(1),
+        date: startDate,
         time: '08:00',
-        harvestDate: (selectedDate && selectedDate >= M.date()) ? selectedDate : M.date(1),
+        harvestDate: startDate,
         dropoffWindow: '07:00 AM - 08:00 AM',
         operator: state.operators[0],
         lots: [{ memberId: (state.members.find(m => m.active) && state.members.find(m => m.active).id) || '', quantity: '', trays: '' }]
       };
     }
 
-    const currentCap = getDailyCapacity(draft.date, editingId);
-
     return shell(editingId ? t('editLoad') : t('scheduleNewLoad'), `
       <form id="session-form" class="form">
-        <!-- 7-Day Quick Slot Selector Strip -->
-        ${renderCapacitySlotPicker(draft.date)}
 
-        <!-- Chamber Capacity Meter Bar Card -->
-        <div class="card" style="padding:14px;gap:10px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:13px;font-weight:600;color:var(--brown)">Chamber Capacity (${niceDate(draft.date)})</span>
-            <span class="badge ${currentCap.isFull ? 'fault' : 'scheduled'}" style="font-size:11.5px">
-              ${currentCap.isFull ? 'Full Slot' : `${currentCap.availTrays} / 8 Trays Available`}
-            </span>
-          </div>
+        ${renderSlotCalendar()}
+        ${renderCapacityCard()}
 
-          <!-- Capacity Bar Meter -->
-          <div style="background:#efe7dc;height:8px;border-radius:4px;overflow:hidden;width:100%">
-            <div style="background:${currentCap.isFull ? 'var(--red)' : 'var(--brown)'};height:100%;width:${currentCap.pctUsed}%;border-radius:4px;transition:width 0.3s ease"></div>
-          </div>
-
-          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)">
-            <span>${currentCap.usedTrays} / 8 Trays Occupied</span>
-            <span><strong>${currentCap.availPcs.toLocaleString()} pcs</strong> max left</span>
-          </div>
-
-          ${currentCap.isFull ? `<p style="font-size:12px;color:#dc2626;margin:2px 0 0;line-height:1.35">⚠️ This chamber time slot is FULL (8/8 trays occupied). Please select an open date slot above.</p>` : ''}
-        </div>
+        <input type="hidden" name="date" value="${esc(draft.date)}">
 
         <div class="field-row">
-          ${field(`<label for="load-date">${t('loadingDate')}</label>`, `<input type="date" name="date" id="load-date" value="${esc(draft.date)}" required>`)}
+          ${field(`<label>${t('loadingDate')}</label>`, `<input type="text" readonly value="${niceDate(draft.date)}">`)}
           ${field(`<label for="load-time">${t('time')}</label>`, `<input type="time" name="time" id="load-time" value="${esc(draft.time)}" required>`)}
         </div>
-
-        ${field(`<label for="harvest-date">Harvest & Dehusking Date</label>`, `<input type="date" name="harvestDate" id="harvest-date" value="${esc(draft.harvestDate || draft.date)}" required>`)}
 
         <div class="field-row">
           ${field(`<label for="dropoff-start">Drop-off Window Start</label>`, `<input type="time" name="dropoffStart" id="dropoff-start" value="${esc(draft.dropoffStart || '07:00')}" required>`)}
@@ -1135,26 +1141,29 @@
               </div>
             `)}
             <div class="field-row">
-              ${field(`<label for="qty-${i}">${t('quantityKg')} <small class="muted">(${lang === 'fil' ? 'opsyonal' : 'optional'})</small></label>`, `<input id="qty-${i}" name="qty-${i}" type="number" min="0" step="1" value="${esc(l.quantity || '')}" placeholder="${lang === 'fil' ? 'e.g. 150 (opsyonal)' : 'e.g. 150 (optional)'}">`)}
-              ${field(`<label for="trays-${i}">${t('trayNumbers')} <small class="muted">(${lang === 'fil' ? 'opsyonal' : 'optional'})</small></label>`, `<input id="trays-${i}" name="trays-${i}" value="${esc(l.trays || '')}" placeholder="${lang === 'fil' ? 'e.g. 1-2 (opsyonal)' : 'e.g. 1-2 (optional)'}">`)}
+              ${field(`<label for="qty-${i}">Estimated quantity <small class="muted">(pcs)</small></label>`, `<input id="qty-${i}" name="qty-${i}" class="qty-input" type="number" min="1" step="1" value="${esc(l.quantity || '')}" placeholder="e.g. 150" required>`)}
+              ${field(`<label for="trays-${i}">${t('trayNumbers')} <small class="muted">(${PCS_PER_TRAY} pcs/tray)</small></label>`, `<input id="trays-${i}" name="trays-${i}" value="${esc(l.trays || '')}" placeholder="Auto-generated" readonly>`)}
             </div>
           </div>
         `).join('')}
         ${btn(`${icon('plus')} ${t('addFarmerLot')}`, 'add-lot', 'secondary')}
-        ${field(`<label>${t('assignedOperator')} <small class="muted">(${lang === 'fil' ? 'pumili ng isa o higit pa' : 'select one or more'})</small></label>`, `
-          <div class="operator-chip-group">
-            ${getOperators().map(o => {
-              const currentOps = (draft.operator || '').split(',').map(s => s.trim()).filter(Boolean);
-              const isSel = currentOps.includes(o);
-              return `
-                <button type="button" class="operator-chip ${isSel ? 'selected' : ''}" data-action="toggle-operator" data-operator="${esc(o)}">
-                  <span class="chip-check">${isSel ? '✓' : '+'}</span> ${esc(o)}
-                </button>
-              `;
-            }).join('')}
+
+        ${heading(`${t('assignedOperator')} <small class="muted">(select one or more)</small>`)}
+        <div class="lot-form operator-card">
+          <div class="multi-select">
+            <button type="button" class="multi-select-btn" data-action="toggle-op-menu">
+              <span id="op-btn-label">${esc(draft.operator || 'Select operator(s)')}</span> ▾
+            </button>
+            <div class="multi-select-menu" hidden>
+              ${getOperators().map(o => {
+                const sel = (draft.operator || '').split(',').map(s => s.trim()).includes(o);
+                return `<label class="multi-select-item"><input type="checkbox" data-action="toggle-operator" data-operator="${esc(o)}" ${sel ? 'checked' : ''}> ${esc(o)}</label>`;
+              }).join('')}
+            </div>
+            <input type="hidden" name="operators_str" id="operators-hidden-input" value="${esc(draft.operator || '')}">
           </div>
-          <input type="hidden" name="operators_str" id="operators-hidden-input" value="${esc(draft.operator || '')}">
-        `)}
+        </div>
+
         <p class="form-error" role="alert"></p>
         <div class="button-row">
           ${btn(t('cancel'), 'back', 'secondary')}
@@ -1185,9 +1194,9 @@
     const endTime = formatTime12h(data.get('dropoffEnd') || '08:00');
     draft = {
       ...draft,
-      date: data.get('date'),
+      date: draft.date,
       time: data.get('time'),
-      harvestDate: data.get('harvestDate') || data.get('date'),
+      harvestDate: draft.date,
       dropoffStart: data.get('dropoffStart') || '07:00',
       dropoffEnd: data.get('dropoffEnd') || '08:00',
       dropoffWindow: `${startTime} - ${endTime}`,
@@ -1701,12 +1710,21 @@
     if (!e.target.closest('.autocomplete-wrapper')) {
       document.querySelectorAll('.autocomplete-list').forEach(l => l.style.display = 'none');
     }
+        if (!e.target.closest('.multi-select')) {
+          document.querySelectorAll('.multi-select-menu').forEach(m => m.hidden = true);
+        }
 
     const el = e.target.closest('[data-action]');
     if (!el || el.disabled) return;
     const a = el.dataset.action;
 
     try {
+            if (a === 'toggle-op-menu') {
+              const menu = el.parentElement.querySelector('.multi-select-menu');
+              menu.hidden = !menu.hidden;
+              if (!menu.hidden) menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+              return;
+            }
       if (a === 'toggle-operator') {
         const op = el.dataset.operator;
         let currentOps = (draft.operator || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -1721,6 +1739,8 @@
         if (checkSpan) checkSpan.textContent = currentOps.includes(op) ? '✓' : '+';
         const hidden = $('#operators-hidden-input');
         if (hidden) hidden.value = draft.operator;
+        const lbl = $('#op-btn-label');
+        if (lbl) lbl.textContent = draft.operator || 'Select operator(s)';
         return;
       } else if (a === 'select-member-option') {
         const input = $('#' + el.dataset.inputId);
@@ -1731,24 +1751,17 @@
         }
         return;
       } else if (a === 'select-date-slot') {
+        readDraft();
         draft.date = el.dataset.date;
-        draft.harvestDate = el.dataset.date;
+        draft.harvestDate = draft.date;
+        autoAssignTrays();
         render();
         return;
-      } else if (a === 'shift-slot-prev') {
-        const cur = new Date(draft.date + 'T12:00:00');
-        cur.setDate(cur.getDate() - 7);
-        const y = cur.getFullYear(), m = String(cur.getMonth() + 1).padStart(2, '0'), d = String(cur.getDate()).padStart(2, '0');
-        draft.date = `${y}-${m}-${d}`;
-        draft.harvestDate = draft.date;
-        render();
-        return;
-      } else if (a === 'shift-slot-next') {
-        const cur = new Date(draft.date + 'T12:00:00');
-        cur.setDate(cur.getDate() + 7);
-        const y = cur.getFullYear(), m = String(cur.getMonth() + 1).padStart(2, '0'), d = String(cur.getDate()).padStart(2, '0');
-        draft.date = `${y}-${m}-${d}`;
-        draft.harvestDate = draft.date;
+      } else if (a === 'slot-month') {
+        readDraft();
+        const [y, m] = (draft.calMonth || draft.date.slice(0, 7)).split('-').map(Number);
+        const d = new Date(y, m - 1 + Number(el.dataset.delta), 1);
+        draft.calMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         render();
         return;
       } else if (a === 'choose-role') {
@@ -1787,8 +1800,11 @@
       } else if (a === 'new-session') {
         editingId = null;
         const activeMember = state.members.find(m => m.active);
+        const minDate = M.date(LEAD_DAYS);
+        const startDate = (selectedDate && selectedDate >= minDate) ? selectedDate : minDate;
         draft = {
-          date: (selectedDate && selectedDate >= M.date()) ? selectedDate : M.date(1),
+          date: startDate,
+          harvestDate: startDate,
           time: '08:00',
           operator: state.operators[0],
           lots: [{ memberId: activeMember ? activeMember.id : '', quantity: '', trays: '' }]
@@ -1801,12 +1817,14 @@
       } else if (a === 'add-lot') {
         readDraft();
         draft.lots.push({ memberId: '', quantity: '', trays: '' });
+        autoAssignTrays();
         const y = window.scrollY;
         render();
         window.scrollTo(0, y);
       } else if (a === 'remove-lot') {
         readDraft();
         draft.lots.splice(Number(el.dataset.index), 1);
+        autoAssignTrays();
         render();
       } else if (a === 'calendar-date') {
         selectedDate = el.dataset.date;
@@ -1841,10 +1859,12 @@
           editingId = null;
           draft = {
             date: el.dataset.date,
+            harvestDate: el.dataset.date,
             time: el.dataset.time,
             operator: state.operators[0],
             lots: state.bookings.filter(b => !b.sessionId && b.date === el.dataset.date && b.time === el.dataset.time).map(b => ({ memberId: b.memberId, quantity: b.quantity, trays: '' }))
           };
+          autoAssignTrays();
           go('draft');
         }
       } else if (a === 'read-alert') {
@@ -1973,9 +1993,31 @@
         render();
       } else if (f.id === 'session-form') {
         readDraft();
-        const cap = getDailyCapacity(draft.date, editingId);
-        if (cap.isFull) {
-          throw Error(lang === 'fil' ? 'Puno na ang slot para sa napiling petsa (8/8 trays occupied). Pumili ng ibang petsa sa itaas.' : 'This chamber time slot is FULL (8/8 trays occupied). Please select an available date slot above.');
+        if (!draft.date) throw Error(lang === 'fil' ? 'Pumili ng petsa ng pagkarga.' : 'Please select a loading date.');
+
+        // 1 week lead time (new loads only, so old/seeded sessions can still be edited)
+        if (!editingId && draft.date < M.date(LEAD_DAYS)) {
+          throw Error(lang === 'fil'
+            ? 'Dapat i-schedule ang karga nang hindi bababa sa 7 araw bago ang pag-ani at pagbabalat.'
+            : 'Loads must be scheduled at least 7 days before the harvest & dehusking date.');
+        }
+
+        // Estimated quantity is now required for every lot
+        draft.lots.forEach((l, i) => {
+          if (!(Number(l.quantity) > 0)) {
+            throw Error(lang === 'fil'
+              ? `Ilagay ang tinatayang dami para sa Lot ${i + 1}.`
+              : `Enter the estimated quantity for Lot ${i + 1}.`);
+          }
+        });
+
+        // Make sure tray numbers are generated, then check chamber capacity
+        autoAssignTrays();
+        const cap = getDailyCapacity(draft.date, editingId, true);
+        if (cap.isOver) {
+          throw Error(lang === 'fil'
+            ? `Lampas sa kapasidad: ${cap.usedTrays}/${MAX_TRAYS} trays. Bawasan ang dami o pumili ng ibang petsa.`
+            : `Over capacity: ${cap.usedTrays}/${MAX_TRAYS} trays. Reduce the quantity or choose another date.`);
         }
         if (!draft.date) throw Error(lang === 'fil' ? 'Pumili ng petsa ng pagkarga.' : 'Please select a loading date.');
         if (!draft.time) throw Error(lang === 'fil' ? 'Pumili ng oras ng pagkarga.' : 'Please select a loading time.');
@@ -2067,14 +2109,21 @@
     } else if (t.id === 'report-sort') {
       reportSort = t.value;
       render();
-    } else if (t.id === 'slot-custom-date') {
-      draft.date = t.value;
-      draft.harvestDate = t.value;
-      render();
     }
   });
 
   document.addEventListener('input', e => {
+        if (e.target.classList.contains('qty-input')) {
+          readDraft();
+          autoAssignTrays();
+          draft.lots.forEach((l, i) => {
+            const trayInput = $('#trays-' + i);
+            if (trayInput) trayInput.value = l.trays;
+          });
+          const card = $('#capacity-card');
+          if (card) card.outerHTML = renderCapacityCard();
+          return;
+        }
     if (e.target.classList.contains('autocomplete-input')) {
       const input = e.target;
       const query = input.value.trim().toLowerCase();

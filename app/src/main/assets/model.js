@@ -74,10 +74,8 @@
       if (!state.members.some(m => m.id === lot.memberId && m.active)) throw Error('Choose a registered, active member for every lot.');
       if (members.has(lot.memberId)) throw Error('This member is already in the session. Combine their lot allocation.');
       members.add(lot.memberId);
-      if (lot.quantity !== '' && lot.quantity !== null && lot.quantity !== undefined) {
-        const quantity = Number(lot.quantity);
-        if (!Number.isFinite(quantity) || quantity < 0) throw Error('Lot quantity must be a non-negative number.');
-      }
+      const quantity = Number(lot.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) throw Error('Enter an estimated quantity (pcs) for every lot.');
       if (lot.trays && String(lot.trays).trim() !== '' && String(lot.trays).trim().toLowerCase() !== 'pending') {
         trays(lot.trays).forEach(n => { if (used.has(n)) throw Error('Two lots share a tray number. Give each lot its own trays.'); used.add(n); });
       }
