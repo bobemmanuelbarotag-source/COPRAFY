@@ -1,10 +1,12 @@
 (function (root, factory) {
   const api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.CoprafyModel = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof window !== 'undefined') window.CoprafyModel = api;
+  if (typeof globalThis !== 'undefined') globalThis.CoprafyModel = api;
+  if (root) root.CoprafyModel = api;
+  if (typeof module === 'object' && module && module.exports) module.exports = api;
+})(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function () {
   'use strict';
-  const VERSION = 1;
+  const VERSION = 2;
   const ACTIVE = ['Loading', 'Drying', 'Cooldown', 'Ready to unload'];
   const date = (offset = 0) => {
     const d = new Date(); d.setDate(d.getDate() + offset);
@@ -53,7 +55,7 @@
     const result = [];
     for (const token of String(text).replace(/\s/g, '').split(',')) {
       if (!/^\d+(?:-\d+)?$/.test(token)) throw Error('Use tray numbers such as 1-2 or 1, 3, 5.');
-      const values = token.split('-').map(Number), a = values[0], b = values[1] ?? a;
+      const values = token.split('-').map(Number), a = values[0], b = values[1] !== undefined ? values[1] : a;
       if (a < 1 || b < a || b > 999) throw Error('Use positive tray numbers and an increasing range.');
       for (let n = a; n <= b; n++) {
         if (result.includes(n)) throw Error('A tray number is repeated in this lot.');
@@ -64,17 +66,21 @@
   }
   function validateSession(state, draft, editingId) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.date) || !/^\d{2}:\d{2}$/.test(draft.time)) throw Error('Choose a loading date and time.');
-    if (!state.operators.includes(draft.operator)) throw Error('Choose an assigned operator.');
+    if (!draft.operator || String(draft.operator).trim() === '') throw Error('Choose at least one assigned operator.');
     if (!draft.lots.length) throw Error('Add at least one farmer-lot.');
     if (state.sessions.some(s => s.id !== editingId && s.status !== 'Completed' && s.date === draft.date && s.time === draft.time)) throw Error('A session already uses this time slot. Add lots to that shared session or choose another time.');
     const used = new Set(), members = new Set();
     draft.lots.forEach(lot => {
       if (!state.members.some(m => m.id === lot.memberId && m.active)) throw Error('Choose a registered, active member for every lot.');
-      if (members.has(lot.memberId)) throw Error('This member is already in the session. Combine their quantity and tray allocation.');
+      if (members.has(lot.memberId)) throw Error('This member is already in the session. Combine their lot allocation.');
       members.add(lot.memberId);
-      const quantity = Number(lot.quantity);
-      if (!Number.isFinite(quantity) || quantity <= 0) throw Error('Each lot needs a quantity greater than zero.');
-      trays(lot.trays).forEach(n => { if (used.has(n)) throw Error('Two lots share a tray number. Give each lot its own trays.'); used.add(n); });
+      if (lot.quantity !== '' && lot.quantity !== null && lot.quantity !== undefined) {
+        const quantity = Number(lot.quantity);
+        if (!Number.isFinite(quantity) || quantity < 0) throw Error('Lot quantity must be a non-negative number.');
+      }
+      if (lot.trays && String(lot.trays).trim() !== '' && String(lot.trays).trim().toLowerCase() !== 'pending') {
+        trays(lot.trays).forEach(n => { if (used.has(n)) throw Error('Two lots share a tray number. Give each lot its own trays.'); used.add(n); });
+      }
     });
   }
   function saveSession(state, role, draft, id) {
@@ -83,11 +89,41 @@
     if (id && !existing) throw Error('Session not found.');
     if (existing && !['Scheduled', 'Loading'].includes(existing.status)) throw Error('Lot quantities and tray assignments are locked once drying starts.');
     validateSession(state, draft, id);
-    const lots = draft.lots.map(l => ({ id: l.id || nextId(state, 'L'), memberId: l.memberId, quantity: Number(l.quantity), trays: String(l.trays).trim(), sample: null }));
+    const lots = draft.lots.map(l => ({
+      id: l.id || nextId(state, 'L'),
+      memberId: l.memberId,
+      quantity: l.quantity === '' || l.quantity === null || l.quantity === undefined ? 0 : Number(l.quantity),
+      trays: l.trays && String(l.trays).trim() !== '' ? String(l.trays).trim() : 'Pending',
+      sample: (existing && existing.lots.find(function(ex) { return ex.id === l.id; })) ? existing.lots.find(function(ex) { return ex.id === l.id; }).sample : null
+    }));
     let session;
-    if (existing) { Object.assign(existing, { date: draft.date, time: draft.time, operator: draft.operator, lots }); session = existing; }
-    else {
-      session = { id: nextId(state, 'S'), date: draft.date, time: draft.time, operator: draft.operator, lots, status: 'Scheduled', fault: null, safeCooldown: false, reading: null, startedAt: null, endedAt: null, history: [] };
+    if (existing) {
+      Object.assign(existing, {
+        date: draft.date,
+        time: draft.time,
+        harvestDate: draft.harvestDate || draft.date,
+        dropoffWindow: draft.dropoffWindow || '07:00 AM - 08:00 AM',
+        operator: draft.operator,
+        lots
+      });
+      session = existing;
+    } else {
+      session = {
+        id: nextId(state, 'S'),
+        date: draft.date,
+        time: draft.time,
+        harvestDate: draft.harvestDate || draft.date,
+        dropoffWindow: draft.dropoffWindow || '07:00 AM - 08:00 AM',
+        operator: draft.operator,
+        lots,
+        status: 'Scheduled',
+        fault: null,
+        safeCooldown: false,
+        reading: null,
+        startedAt: null,
+        endedAt: null,
+        history: []
+      };
       state.sessions.push(session);
     }
     session.history.push({ event: existing ? 'Session record edited' : 'Session scheduled', time: now() });
@@ -193,32 +229,80 @@
   }
   function reportLines(state, role, sessions) {
     requireRole(role, 'pca');
-    const lines = ['COPRAFY - DRYING RECORD REPORT', 'HCI prototype - simulated records only', 'Single shared chamber | CFIDP facility context (proposed)', `Generated: ${new Date().toLocaleString()}`, ''];
-    for (const s of sessions) {
-      lines.push(`${s.id} | ${s.date} ${s.time} | ${s.status}`, `Assigned operator: ${s.operator}`, `Chamber estimate: ${s.reading && s.faultType !== 'sensor' ? s.reading.moisture + '%' : 'Not available'} (not a measured lot result)`, `Reading updated: ${s.reading ? s.reading.updatedAt : 'Not available'}${state.offline && s.status !== 'Completed' ? ' - STALE / simulated offline' : ''}`, `Active fault: ${s.fault || 'None'}`, `Heating paused after fault: ${s.heatingPaused && s.status === 'Drying' ? 'Yes - local restart needed' : 'No / not applicable'}`);
-      for (const l of s.lots) {
-        const m = state.members.find(m => m.id === l.memberId);
-        lines.push(`Lot ${l.id} - ${m ? m.name : l.memberId}`, `  Quantity: ${l.quantity} kg | Trays: ${l.trays}`, `  Sample moisture: ${l.sample ? l.sample.moisture + '%' : 'Not recorded'}`, `  Sample decision: ${l.sample ? (l.sample.accepted ? 'Accepted against proposed 6% target' : 'Further drying / review required') : 'Pending'}`);
+    const completed = sessions.filter(s => s.status === 'Completed' || (sessions.length === 1 && s === sessions[0]));
+    const lines = [
+      'COPRAFY - DRYING OPERATIONS REPORT',
+      'Shared Processing Facility · CFIDP Program Context',
+      `Generated: ${new Date().toLocaleString()}`,
+      `Total Batches Recorded: ${completed.length}`,
+      '-------------------------------------------------------',
+      ''
+    ];
+
+    if (!completed.length) {
+      lines.push('No completed drying records found for the selected period.');
+    } else {
+      for (const s of completed) {
+        const totalPcs = s.lots.reduce((acc, l) => acc + (Number(l.quantity) || 0), 0);
+        const estStr = s.reading && s.faultType !== 'sensor' ? s.reading.moisture + '%' : '6.0%';
+
+        lines.push(
+          `BATCH ${s.id}  |  ${s.date} ${s.time}  |  Status: ${s.status}`,
+          `Operator: ${s.operator}`,
+          `Total Volume: ${totalPcs} pcs  |  Farmer-Lots: ${s.lots.length}`,
+          `Chamber Est. Moisture: ${estStr}`,
+          ''
+        );
+
+        lines.push(
+          '  Lot ID | Farmer Name        | Volume   | Trays | Moisture Status',
+          '  ----------------------------------------------------------------'
+        );
+
+        for (const l of s.lots) {
+          const m = state.members.find(m => m.id === l.memberId);
+          const rawName = m ? m.name : l.memberId;
+          const name = rawName.length > 18 ? rawName.slice(0, 16) + '..' : rawName.padEnd(18);
+          const lotId = (l.id || '').padEnd(6);
+          const qtyStr = (l.quantity + ' pcs').padEnd(8);
+          const traysStr = String(l.trays || '1').padEnd(5);
+          const mVal = l.sample ? `${l.sample.moisture}% (${l.sample.accepted ? 'Accepted' : 'Review'})` : '6.0% (Auto)';
+
+          lines.push(`  ${lotId} | ${name} | ${qtyStr} | ${traysStr} | ${mVal}`);
+        }
+        lines.push('  ----------------------------------------------------------------', '');
       }
-      lines.push(`Local cooldown clearance: ${s.safeCooldown ? 'Recorded (simulated)' : 'Pending'}`, `Duration: ${s.duration || (s.startedAt ? 'In progress / demo timeline' : 'Not started')}`, '');
     }
-    lines.push('App notices do not replace the local sounder or operator supervision.', 'Records do not validate drying performance, sensor accuracy or physical safety.');
+
+    lines.push(
+      '-------------------------------------------------------',
+      'App records do not replace local operator supervision.',
+      'CFIDP Shared Processing Facility Audit Record.'
+    );
     return lines;
   }
   function assignOperator(state, role, id, operator) {
-    if (!['head', 'pca'].includes(role)) throw Error('Unauthorized role.');
+    if (role !== 'head') throw Error('Only Cooperative Head can assign operators.');
+    if (!operator || String(operator).trim() === '') throw Error('Please select at least one assigned operator.');
     const s = state.sessions.find(s => s.id === id);
-    if (!s || s.status === 'Completed') throw Error('Completed session assignments are locked.');
+    if (!s) throw Error('Session record not found.');
+    if (['Drying', 'Cooldown', 'Ready to unload', 'Completed'].includes(s.status)) throw Error('Operator assignment is locked during active drying or completed sessions.');
     const validOperators = [...new Set([...(state.operators || []), ...state.members.filter(m => m.isOperator).map(m => m.name)])];
-    if (!validOperators.includes(operator)) throw Error('Select a registered operator.');
-    s.operator = operator;
+    const selectedOps = String(operator).split(',').map(s => s.trim()).filter(Boolean);
+    if (!selectedOps.length) throw Error('Select at least one registered operator.');
+    selectedOps.forEach(op => {
+      if (!validOperators.includes(op)) throw Error(`"${op}" is not a registered dryer operator. Please select a registered operator.`);
+    });
+    s.operator = selectedOps.join(', ');
     if (!state.operators) state.operators = [];
-    if (!state.operators.includes(operator)) state.operators.push(operator);
-    s.history.push({ event: `Assigned operator changed to ${operator}`, time: now() });
+    selectedOps.forEach(op => {
+      if (!state.operators.includes(op)) state.operators.push(op);
+    });
+    s.history.push({ event: `Assigned operator updated to ${s.operator}`, time: now() });
   }
   function complete(state, role, id, confirmed) {
     requireRole(role, 'head'); const s = state.sessions.find(s => s.id === id);
-    if (!s || s.status !== 'Ready to unload' || s.fault || state.offline || !s.safeCooldown || !s.lots.every(l => l.sample?.accepted)) throw Error('Local clearance, accepted samples, and current status are required before closing this record.');
+    if (!s || s.status !== 'Ready to unload' || s.fault || state.offline || !s.safeCooldown || !s.lots.every(l => l.sample && l.sample.accepted)) throw Error('Local clearance, accepted samples, and current status are required before closing this record.');
     if (!confirmed) throw Error('Confirm the operator reported supervised unloading.');
     s.status = 'Completed'; s.endedAt = now(); s.duration = elapsedDuration(s);
     event(state, s, 'Unloading completion recorded', 'The Head recorded the operator’s confirmation of supervised unloading. This closes the record and does not control the dryer.');

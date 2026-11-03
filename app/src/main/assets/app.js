@@ -1,9 +1,15 @@
 (() => {
   'use strict';
-  const M = window.CoprafyModel, KEY = 'coprafy.prototype.v1';
+  const M = window.CoprafyModel || (typeof globalThis !== 'undefined' ? globalThis.CoprafyModel : null) || (typeof CoprafyModel !== 'undefined' ? CoprafyModel : null);
+  const KEY = 'coprafy.prototype.v1';
   const $ = selector => document.querySelector(selector);
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = value => String(value !== null && value !== undefined ? value : '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   
+  if (!M) {
+    console.error('Fatal: CoprafyModel is not defined.');
+    return;
+  }
+
   let state;
   try {
     state = JSON.parse(localStorage.getItem(KEY));
@@ -46,7 +52,7 @@
 
   let role = null, chosenRole = 'head', route = 'roles', selectedId = 'S0231', stack = [];
   let selectedDate = M.date(), calendarMonth = M.date().slice(0, 7);
-  let reportRange = '7', reportFrom = M.date(-6), reportTo = M.date(), memberSearch = '', memberFilter = 'all', reportSort = 'newest';
+  let reportRange = '7', reportFrom = M.date(-6), reportTo = M.date(), memberSearch = '', memberFilter = 'all', reportSort = 'newest', operationsFilter = 'all';
   let draft = null, editingId = null, modalReturn = null, toastTimer;
   let lang = 'en';
   try {
@@ -60,6 +66,9 @@
       headTitle: 'Cooperative Head',
       pcaTitle: 'PCA Personnel',
       navHome: 'Home',
+      navMonitoring: 'Monitoring',
+      navOperations: 'Operations',
+      operationsTitle: 'Drying Operations',
       navSessions: 'Sessions',
       navRecords: 'Records',
       navAlerts: 'Alerts',
@@ -140,7 +149,7 @@
       loadingDate: 'Loading date',
       time: 'Time',
       farmerMember: 'Farmer-member',
-      quantityKg: 'Quantity (kg)',
+      quantityKg: 'Quantity (pcs)',
       trayNumbers: 'Tray numbers',
       addFarmerLot: 'Add farmer-lot',
       sampleMoisturePercent: 'Sample moisture (%)',
@@ -164,7 +173,7 @@
       recentDryingRuns: 'Recent Drying Operations',
       allRecords: 'View All Records',
       facilitySpecs: 'Facility Specifications',
-      facilitySpecsDesc: '4,000 coconut halves capacity · Dual heat source (Solar-PV 10.8 kWp & Biomass furnace) · CFIDP Program',
+      facilitySpecsDesc: 'Max 30,000 coconut halves capacity · Dual heat source (Solar-PV 10.8 kWp & Biomass furnace) · CFIDP Program',
       dryingRecordsTitle: 'Drying Operations Records',
       filterPeriod: 'Filter Period',
       today: 'Today',
@@ -179,7 +188,7 @@
       batchCol: 'Batch ID',
       dateTimeCol: 'Date & Time',
       farmersCol: 'Farmer-Lots',
-      qtyCol: 'Total (kg)',
+      qtyCol: 'Total (pcs)',
       operatorCol: 'Operator',
       moistureCol: 'Moisture',
       statusCol: 'Status',
@@ -211,6 +220,9 @@
       headTitle: 'Pinuno ng Kooperatiba',
       pcaTitle: 'Kawani ng PCA',
       navHome: 'Home',
+      navMonitoring: 'Monitoring',
+      navOperations: 'Operations',
+      operationsTitle: 'Mga Operasyon ng Pagpapatuyo',
       navSessions: 'Iskedyul',
       navRecords: 'Mga Tala',
       navAlerts: 'Alerto',
@@ -291,7 +303,7 @@
       loadingDate: 'Petsa ng pagkarga',
       time: 'Oras',
       farmerMember: 'Magsasakang miyembro',
-      quantityKg: 'Timbang (kg)',
+      quantityKg: 'Dami (pcs)',
       trayNumbers: 'Numero ng mga tray',
       addFarmerLot: 'Magdagdag ng lot ng magsasaka',
       sampleMoisturePercent: 'Moisture ng sample (%)',
@@ -315,7 +327,7 @@
       recentDryingRuns: 'Kamakailang Pagpapatuyo',
       allRecords: 'Tingnan Lahat ng Tala',
       facilitySpecs: 'Detalye ng Pasilidad',
-      facilitySpecsDesc: 'Kapasidad: 4,000 bao · Dalawang pinagmumulan ng init (Solar-PV 10.8 kWp at Pugon ng Bunot) · CFIDP Program',
+      facilitySpecsDesc: 'Kapasidad: Max 30,000 bao · Dalawang pinagmumulan ng init (Solar-PV 10.8 kWp at Pugon ng Bunot) · CFIDP Program',
       dryingRecordsTitle: 'Mga Tala ng Pagpapatuyo',
       filterPeriod: 'Piliin ang Panahon',
       today: 'Ngayong Araw',
@@ -330,7 +342,7 @@
       batchCol: 'Batch ID',
       dateTimeCol: 'Petsa at Oras',
       farmersCol: 'Mga Magsasaka',
-      qtyCol: 'Timbang (kg)',
+      qtyCol: 'Dami (pcs)',
       operatorCol: 'Operator',
       moistureCol: 'Moisture',
       statusCol: 'Katayuan',
@@ -360,7 +372,7 @@
     }
   };
 
-  const t = key => I18N[lang]?.[key] ?? I18N.en[key] ?? key;
+  const t = key => (I18N[lang] && I18N[lang][key] !== undefined) ? I18N[lang][key] : ((I18N.en && I18N.en[key] !== undefined) ? I18N.en[key] : key);
 
   const phaseMap = {
     'Loading': { en: 'Loading', fil: 'Karga' },
@@ -383,12 +395,15 @@
   const shortRole = () => role === 'pca' ? t('pcaTitle') : t('headTitle');
   const member = id => state.members.find(m => m.id === id);
   const session = id => state.sessions.find(s => s.id === id);
-  const active = () => state.sessions.find(s => M.ACTIVE.includes(s.status));
+  const active = () => {
+    const act = state.sessions.find(s => M.ACTIVE.includes(s.status));
+    return act || null;
+  };
   const niceDate = d => new Date(d + 'T12:00:00').toLocaleDateString(lang === 'fil' ? 'fil-PH' : 'en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
   const niceTime = d => new Date(d).toLocaleTimeString(lang === 'fil' ? 'fil-PH' : 'en-PH', { hour: '2-digit', minute: '2-digit' });
   const badge = status => {
     const cls = ({ 'Scheduled': 'scheduled', 'Loading': 'loading', 'Drying': 'drying', 'Cooldown': 'cooldown', 'Ready to unload': 'ready', 'Completed': 'completed' })[status] || 'fault';
-    const label = statusLabels[status]?.[lang] || status;
+    const label = (statusLabels[status] && statusLabels[status][lang]) ? statusLabels[status][lang] : status;
     return `<span class="badge ${cls}"><span class="status-dot" aria-hidden="true"></span>${esc(label)}</span>`;
   };
   const btn = (label, action, variant = '', attrs = '') => `<button type="button" class="btn ${variant}" data-action="${action}" ${attrs}>${label}</button>`;
@@ -424,8 +439,8 @@
     }
     if (['home', 'roles'].includes(route)) return false;
     const prev = stack.pop();
-    route = prev?.route || (role ? 'home' : 'roles');
-    selectedId = prev?.selectedId || selectedId;
+    route = (prev && prev.route) ? prev.route : (role ? 'home' : 'roles');
+    selectedId = (prev && prev.selectedId) ? prev.selectedId : selectedId;
     render();
     return true;
   }
@@ -435,17 +450,40 @@
   function modal(title, body, actions = '') {
     modalReturn = document.activeElement;
     $('#modal-root').innerHTML = `<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button class="icon-btn" data-action="close-modal" aria-label="Close">${icon('close')}</button><h2 id="modal-title">${title}</h2>${body}${actions}</section></div>`;
-    setTimeout(() => $('#modal-root input, #modal-root select, #modal-root button:not(.icon-btn)')?.focus(), 30);
+    setTimeout(() => {
+      const focusTarget = $('#modal-root input, #modal-root select, #modal-root button:not(.icon-btn)');
+      if (focusTarget) focusTarget.focus();
+    }, 30);
   }
 
   function closeModal() {
     $('#modal-root').innerHTML = '';
-    if (modalReturn?.isConnected) modalReturn.focus();
+    if (modalReturn && modalReturn.isConnected) modalReturn.focus();
     modalReturn = null;
   }
 
   const field = (label, input, hint = '') => `<div class="field">${label}${input}${hint ? `<small class="muted">${hint}</small>` : ''}</div>`;
   const optionMembers = selected => state.members.filter(m => m.active || m.id === selected).map(m => `<option value="${m.id}" ${m.id === selected ? 'selected' : ''}>${esc(m.name)} · ${m.id}${m.active ? '' : ' (inactive)'}</option>`).join('');
+  const datalistMembers = id => `<datalist id="${id}">${state.members.filter(m => m.active).map(m => `<option value="${esc(m.name)} · ${m.id}"></option>`).join('')}</datalist>`;
+  const resolveMemberId = val => {
+    if (!val) return '';
+    const str = String(val).trim();
+    if (!str) return '';
+    const byId = state.members.find(m => m.id.toLowerCase() === str.toLowerCase());
+    if (byId) return byId.id;
+    const idMatch = str.match(/\b(M\d+)\b/i);
+    if (idMatch) {
+      const found = state.members.find(m => m.id.toLowerCase() === idMatch[1].toLowerCase());
+      if (found) return found.id;
+    }
+    const byName = state.members.find(m => m.name.toLowerCase() === str.toLowerCase() || str.toLowerCase().includes(m.name.toLowerCase()));
+    if (byName) return byName.id;
+    return str;
+  };
+  const memberDisplay = id => {
+    const m = member(id);
+    return m ? `${m.name} · ${m.id}` : (id || '');
+  };
   const getOperators = () => [...new Set([...(state.operators || []), ...state.members.filter(m => m.isOperator && m.active).map(m => m.name)])];
   const optionOperators = selected => getOperators().map(o => `<option ${o === selected ? 'selected' : ''}>${esc(o)}</option>`).join('');
   const empty = (title, detail) => `<div class="empty">${icon('sessions')}<h3>${title}</h3><p>${detail}</p></div>`;
@@ -483,18 +521,19 @@
         ${field('<label for="email">Email</label>', `<input id="email" name="email" type="email" value="${email}" autocomplete="username" required>`)}
         ${field('<label for="password">Password</label>', '<input id="password" name="password" type="password" value="demo1234" autocomplete="current-password" required>')}
         <p class="form-error" role="alert"></p>
-        <button class="btn" type="submit">${lang === 'fil' ? 'Mag-log in' : 'Log in'}</button>
-        ${btn(lang === 'fil' ? 'Palitan ang tungkulin' : 'Change role', 'change-role', 'secondary')}
+        <div class="button-row">
+          ${btn(lang === 'fil' ? 'Palitan ang tungkulin' : 'Change role', 'change-role', 'secondary')}
+          <button class="btn" type="submit">${lang === 'fil' ? 'Mag-log in' : 'Log in'}</button>
+        </div>
       </form>
       <small class="muted" style="text-align:center;display:block">${lang === 'fil' ? 'Default na password:' : 'Default password:'} <strong>demo1234</strong></small>
     </div>`;
   }
 
   function shell(title, body, topBack = false, currentTab = route) {
-    if (currentTab === 'status') currentTab = 'home';
     const navs = role === 'pca'
-      ? [['home', t('navHome'), 'home'], ['members', t('navMembers'), 'members'], ['reports', t('navRecords'), 'reports'], ['profile', t('navOptions'), 'options']]
-      : [['home', t('navHome'), 'home'], ['sessions', t('navSessions'), 'sessions'], ['alerts', t('navAlerts'), 'alerts'], ['profile', t('navOptions'), 'options']];
+      ? [['home', t('navHome'), 'home'], ['operations', t('navOperations'), 'cycle'], ['members', t('navMembers'), 'members'], ['reports', t('navRecords'), 'reports'], ['profile', t('navOptions'), 'options']]
+      : [['home', t('navHome'), 'home'], ['status', t('navMonitoring'), 'status'], ['sessions', t('navSessions'), 'sessions'], ['alerts', t('navAlerts'), 'alerts'], ['profile', t('navOptions'), 'options']];
 
     return `<div class="screen">
       <header class="header">
@@ -515,14 +554,14 @@
   }
 
   function sessionCard(s) {
-    const totalKg = s.lots.reduce((n, l) => n + l.quantity, 0);
+    const totalPcs = s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
 
     return `<button class="card click-card session-card" data-action="open-session" data-id="${s.id}">
       <div class="card-top" style="align-items:flex-start">
         <div style="flex:1;min-width:0;padding-right:10px">
           <h3 class="session-farmer-names">${s.id} · ${s.lots.length} ${t('farmerLots')}</h3>
           <p class="card-subtitle" style="margin-top:4px;line-height:1.45">
-            ${t('totalQuantity')}: <strong>${totalKg} kg</strong><br>
+            ${t('totalQuantity')}: <strong>${totalPcs > 0 ? totalPcs.toLocaleString() + ' pcs' : 'Pending'}</strong><br>
             ${t('operator')}: <strong>${esc(s.operator)}</strong>${s.fault ? ' · ' + t('alert') : ''}
           </p>
         </div>
@@ -541,25 +580,36 @@
   function pcaHomeScreen() {
     const activeMembers = state.members.filter(m => m.active).length;
     const completedSessions = state.sessions.filter(s => s.status === 'Completed');
-    const totalDryingKg = state.sessions.reduce((acc, s) => acc + s.lots.reduce((n, l) => n + l.quantity, 0), 0);
+    const totalDryingKg = state.sessions.reduce((acc, s) => acc + s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0), 0);
+    const totalNutsPcs = Math.round(totalDryingKg * 5);
+    const totalHalves = Math.round(totalDryingKg * 10);
     const avgMoisture = '5.9%';
-    const recentSessions = state.sessions.slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)).slice(0, 3);
 
     let body = `
-      <div class="banner-card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div>
-            <span class="badge completed" style="margin-bottom:6px">${t('pcaFacility')}</span>
-            <h3>Philippine Coconut Authority</h3>
-            <p>${t('pcaFacilityDesc')}</p>
+      <!-- Top Hero Header Card -->
+      <div class="batch-hero-card" style="padding:16px;gap:10px">
+        <div class="batch-hero-top" style="align-items:flex-start">
+          <div style="flex:1;min-width:0">
+            <span class="badge scheduled" style="background:rgba(255,255,255,0.18);color:#ffffff;border:0;font-size:11px">Philippine Coconut Authority</span>
+            <h2 style="margin-top:4px;font-size:18px;color:#ffffff;font-weight:700;line-height:1.2">SPF San Lorenzo Ruiz</h2>
+            <p style="font-size:12px;color:#ded0c3;margin-top:2px">Shared Processing Facility</p>
           </div>
           <div class="banner-badge" aria-hidden="true">${icon('coconut')}</div>
         </div>
-        <div style="font-size:12px;color:var(--muted);border-top:1px solid #00000010;padding-top:6px;margin-top:4px">
-          Coconut Farmers & Industry Development Plan (CFIDP)
+
+        <div class="batch-hero-grid" style="padding:10px;gap:8px">
+          <div class="batch-hero-stat">
+            <small>Program Context</small>
+            <strong>CFIDP Program</strong>
+          </div>
+          <div class="batch-hero-stat">
+            <small>Quality Target</small>
+            <strong>≤6.0% Moisture</strong>
+          </div>
         </div>
       </div>
 
+      <!-- 2x2 KPI Grid -->
       <div class="pca-kpi-grid">
         <div class="pca-kpi-card">
           <div class="pca-kpi-top">
@@ -577,10 +627,11 @@
         </div>
         <div class="pca-kpi-card">
           <div class="pca-kpi-top">
-            <strong>${totalDryingKg.toLocaleString()} <span style="font-size:13px;font-weight:normal">kg</span></strong>
+            <strong>${totalNutsPcs.toLocaleString()} <span style="font-size:13px;font-weight:normal">pcs</span></strong>
             <span class="pca-kpi-badge" aria-hidden="true">${icon('coconut')}</span>
           </div>
           <span>${t('totalCopraDried')}</span>
+          <small class="muted" style="font-size:11px;display:block;margin-top:2px">${totalDryingKg.toLocaleString()} kg (~${totalHalves.toLocaleString()} halves)</small>
         </div>
         <div class="pca-kpi-card">
           <div class="pca-kpi-top">
@@ -591,59 +642,49 @@
         </div>
       </div>
 
-      <div class="card">
+      <!-- Quick Action Controls -->
+      <div class="card" style="padding:14px;gap:10px">
         <div class="card-top">
-          <h3>${t('quickActions')}</h3>
+          <h3 style="font-size:15px">${t('quickActions')}</h3>
         </div>
         <div class="button-row">
-          ${btn(`${icon('plus')} ${t('registerMember')}`, 'new-member')}
-          ${btn(`${icon('reports')} ${t('navRecords')}`, 'nav', 'secondary', 'data-route="reports"')}
+          ${btn(`${icon('cycle')} ${t('navOperations')}`, 'nav', '', 'data-route="operations"')}
+          ${btn(`${icon('plus')} ${t('registerMember')}`, 'new-member', 'secondary')}
         </div>
       </div>
 
-      <section class="section">
-        <div class="section-heading">
-          <h2>${t('recentDryingRuns')}</h2>
-        </div>
-        ${recentSessions.map(s => {
-          const totalKg = s.lots.reduce((n, l) => n + l.quantity, 0);
-          const farmerNames = s.lots.map(l => esc(member(l.memberId)?.name || l.memberId)).join(', ');
-          return `<button class="card click-card" data-action="open-session" data-id="${s.id}" style="padding:14px 16px">
-            <div class="card-top" style="align-items:flex-start">
-              <div style="flex:1;min-width:0">
-                <h3 style="font-size:15px;margin:0 0 4px">${farmerNames}</h3>
-                <p class="card-subtitle">${s.id} · ${niceDate(s.date)} · ${totalKg} kg · ${t('operator')}: ${esc(s.operator)}</p>
-              </div>
-              <div style="text-align:right;flex-shrink:0">
-                ${badge(s.status)}
-              </div>
-            </div>
-          </button>`;
-        }).join('')}
-      </section>
-
-      <div class="card">
+      <!-- Facility Specs & Operations Standards -->
+      <div class="card" style="padding:14px;gap:10px">
         <div class="card-top">
-          <h3>${t('aboutCoprafy')}</h3>
+          <h3 style="font-size:15px">Facility Specs & Standards</h3>
         </div>
-        <p class="card-subtitle" style="font-size:13px;line-height:1.5">${t('coprafyOverviewDesc')}</p>
-        <div style="display:grid;gap:6px;margin-top:2px;font-size:12.5px;color:var(--ink);background:var(--cream);padding:10px 12px;border-radius:8px">
-          <div><span class="inline-svg">${icon('temp')}</span> <strong>${t('featureMonitoring')}:</strong> ${t('featureMonitoringDesc')}</div>
-          <div><span class="inline-svg">${icon('status')}</span> <strong>${t('featureTraceability')}:</strong> ${t('featureTraceabilityDesc')}</div>
-          <div><span class="inline-svg">${icon('coconut')}</span> <strong>${t('featureQuality')}:</strong> ${t('featureQualityDesc')}</div>
+        <div style="display:grid;gap:8px;font-size:12.5px;color:var(--ink)">
+          <div style="display:flex;justify-content:space-between;align-items:center;background:#fdfbf7;padding:8px 10px;border-radius:8px;border:1px solid var(--line)">
+            <span class="muted">Capacity</span>
+            <strong>Max 30,000 Halves</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;background:#fdfbf7;padding:8px 10px;border-radius:8px;border:1px solid var(--line)">
+            <span class="muted">Heating</span>
+            <strong>Solar-PV & Biomass</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;background:#fdfbf7;padding:8px 10px;border-radius:8px;border:1px solid var(--line)">
+            <span class="muted">Target</span>
+            <strong class="text-green">≤6.0% Moisture</strong>
+          </div>
         </div>
       </div>
     `;
 
-    return shell(t('pcaDashboard'), body, false, 'home');
+    return shell('PCA Oversight', body, false, 'home');
   }
 
   function headHomeScreen() {
     const todaySessions = state.sessions.filter(s => s.date === M.date());
     const scheduledSessions = state.sessions.filter(s => s.status === 'Scheduled');
-    const dryingBatches = state.sessions.filter(s => M.ACTIVE.includes(s.status));
     const activeMembers = state.members.filter(m => m.active).length;
-    const totalCopraDried = state.sessions.reduce((acc, s) => acc + s.lots.reduce((n, l) => n + l.quantity, 0), 0);
+    const totalCopraDried = state.sessions.reduce((acc, s) => acc + s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0), 0);
+    const totalNutsPcs = Math.round(totalCopraDried * 5);
+    const totalHalves = Math.round(totalCopraDried * 10);
 
     let body = `
       <div class="banner-card">
@@ -684,73 +725,24 @@
         </div>
         <div class="pca-kpi-card">
           <div class="pca-kpi-top">
-            <strong>${totalCopraDried.toLocaleString()} <span style="font-size:13px;font-weight:normal">kg</span></strong>
+            <strong>${totalNutsPcs.toLocaleString()} <span style="font-size:13px;font-weight:normal">pcs</span></strong>
             <span class="pca-kpi-badge" aria-hidden="true">${icon('coconut')}</span>
           </div>
           <span>${t('totalCopraDried')}</span>
+          <small class="muted" style="font-size:11px;display:block;margin-top:2px">${totalCopraDried.toLocaleString()} kg (~${totalHalves.toLocaleString()} halves)</small>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <h3>${t('quickActions')}</h3>
+        </div>
+        <div class="button-row">
+          ${btn(`${icon('status')} ${t('navMonitoring')}`, 'nav', '', 'data-route="status"')}
+          ${btn(`${icon('plus')} ${t('scheduleNewLoad')}`, 'new-session', 'secondary')}
         </div>
       </div>
     `;
-
-    body += `<section class="section">${heading(t('activeDryerMonitoring'))}`;
-    if (dryingBatches.length) {
-      body += dryingBatches.map(s => {
-        const totalKg = s.lots.reduce((n, l) => n + l.quantity, 0);
-        const phases = ['Loading', 'Drying', 'Cooldown', 'Ready', 'Completed'],
-              ix = { 'Scheduled': -1, 'Loading': 0, 'Drying': 1, 'Cooldown': 2, 'Ready to unload': 3, 'Completed': 4 }[s.status];
-
-        let notice = '';
-        if (state.offline) notice = `<div class="info warning"><strong>${t('monitorOffline')}</strong>${t('monitorOfflineDesc')}</div>`;
-        else if (s.fault) notice = `<div class="info fault"><strong>${t('alert')}: ${esc(s.fault)}</strong>Check the dryer controls.</div>`;
-        else if (s.status === 'Cooldown') notice = `<div class="info warning"><strong>${t('cooldownInProgress')}</strong>${s.safeCooldown ? t('cooldownClearanceRecorded') : t('cooldownWait')}</div>`;
-        else if (s.status === 'Ready to unload') notice = `<div class="info"><strong>${t('readyToUnload')}</strong>${t('readyToUnloadNotice')}</div>`;
-        else if (s.status === 'Completed') notice = `<div class="info"><strong>${t('completed')}</strong>${t('completedNotice')}</div>`;
-        else if (s.status === 'Drying' && s.heatingPaused) notice = `<div class="info warning"><strong>${t('heatingPaused')}</strong>${t('heatingPausedDesc')}</div>`;
-        else if (s.status === 'Drying') notice = `<div class="info"><strong>${t('dryingInProgress')}</strong>${t('dryingInProgressDesc')}</div>`;
-
-        return `<div class="card">
-          <div class="card-top">
-            <div>
-              <h3 style="font-size:17px">Batch ${s.id} · ${niceDate(s.date)}</h3>
-              <p class="card-subtitle" style="font-size:13px;margin-top:2px">${t('assignedOperator')}: <strong>${esc(s.operator)}</strong></p>
-            </div>
-            ${badge(s.status)}
-          </div>
-
-          ${readingMarkup(s)}
-
-          <div style="margin-top:4px">
-            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">${t('progress')}</div>
-            <div class="steps">${phases.map((p, i) => `<div class="step ${i < ix ? 'done' : i === ix ? 'current' : ''}">${phaseMap[p]?.[lang] || p}</div>`).join('')}</div>
-          </div>
-
-          ${notice}
-
-          <div class="card-lots-summary compact" style="margin-top:4px">
-            <div class="card-lots-header">
-              <span>${t('farmerLots')} (${s.lots.length})</span>
-              <span>${t('total')}: ${totalKg} kg</span>
-            </div>
-          </div>
-
-          ${role === 'head' && s.status === 'Ready to unload' ? btn(t('recordUnloadCompletion'), 'complete', '', `data-id="${s.id}"`) : ''}
-
-          <button type="button" class="card-footer-action" data-action="open-session" data-id="${s.id}">
-            <span>${t('tapToViewDetails')}</span>
-            ${icon('right')}
-          </button>
-        </div>`;
-      }).join('');
-    } else {
-      body += `<div class="card" style="text-align:center;padding:32px 18px">
-        <h3 style="font-size:17px;margin-bottom:6px">${t('dryerIdle')}</h3>
-        <p class="card-subtitle" style="max-width:300px;margin:0 auto 16px">${t('dryerIdleDesc')}</p>
-        ${btn(`${icon('plus')} ${t('scheduleNewLoad')}`, 'new-session')}
-      </div>`;
-    }
-    body += `</section>`;
-
-    body += btn(`${icon('plus')} ${t('scheduleNewLoad')}`, 'new-session');
 
     return shell(t('dashboard'), body, false, 'home');
   }
@@ -807,13 +799,26 @@
   }
 
   function lotsMarkup(s, sampling = false) {
-    return s.lots.map(l => `<div class="lot-card">
-      <div class="card-top">
-        <h3>${esc(member(l.memberId)?.name || l.memberId)}</h3>
-        <small>${l.id}</small>
+    return s.lots.map(l => `<div class="card lot-card" style="padding:16px;gap:10px">
+      <div class="card-top" style="align-items:flex-start">
+        <div>
+          <h3 style="font-size:16px;margin:0 0 2px;color:var(--brown)">${esc((member(l.memberId) && member(l.memberId).name) || l.memberId)}</h3>
+          <small class="muted" style="font-size:12px">Lot ID: <strong>${l.id}</strong> · Member ID: ${l.memberId}</small>
+        </div>
+        <span class="badge scheduled" style="font-size:12px;padding:4px 10px">${l.quantity} pcs</span>
       </div>
-      <p class="card-subtitle">${l.quantity} kg · ${t('trays')} ${esc(l.trays)} · ${l.memberId}</p>
-      <p class="card-subtitle">${t('sample')}: ${l.sample ? `${l.sample.moisture}% · <strong class="${l.sample.accepted ? 'text-green' : 'error-text'}">${l.sample.accepted ? t('accepted') : t('needsDryingReview')}</strong>` : t('notRecordedYet')}</p>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;background:#fdfbf7;border-radius:10px;padding:8px 12px;font-size:12.5px;border:1px solid var(--line)">
+        <span>Trays Allocated: <strong>Trays ${esc(l.trays)}</strong></span>
+        <span>
+          ${l.sample
+            ? `<strong class="${l.sample.accepted ? 'text-green' : 'error-text'}">${l.sample.moisture}% (${l.sample.accepted ? t('accepted') : t('needsDryingReview')})</strong>`
+            : `<span class="muted">${t('notRecordedYet')}</span>`}
+        </span>
+      </div>
+
+      ${(l.sample && l.sample.note) ? `<small class="muted" style="font-size:11.5px;font-style:italic">Note: ${esc(l.sample.note)}</small>` : ''}
+
       ${sampling && role === 'head' && ['Drying', 'Cooldown'].includes(s.status) ? btn(t('recordSample'), 'sample', 'secondary small', `data-id="${s.id}" data-lot="${l.id}"`) : ''}
     </div>`).join('');
   }
@@ -824,52 +829,243 @@
 
     let actions = '';
     if (role === 'head' && ['Scheduled', 'Loading'].includes(s.status)) actions += btn(t('editLoad'), 'edit-session', 'secondary', `data-id="${s.id}"`);
-    if (['head', 'pca'].includes(role) && s.status !== 'Completed') actions += btn(t('assignOperator'), 'assign-operator', 'secondary', `data-id="${s.id}"`);
+    // Re-assigning operator is not allowed once scheduled
+    if (['head', 'pca'].includes(role) && !s.operator && !['Scheduled', 'Loading', 'Drying', 'Cooldown', 'Ready to unload', 'Completed'].includes(s.status)) actions += btn(t('assignOperator'), 'assign-operator', 'secondary', `data-id="${s.id}"`);
     if (role === 'head' && s.status === 'Ready to unload') actions += btn(t('recordUnloadCompletion'), 'complete', '', `data-id="${s.id}"`);
 
+    const totalKg = s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+
     return shell(s.id, `
-      <div class="card session-meta-card">
-        <div class="card-top">
-          <h2>${niceDate(s.date)} · ${esc(s.time)}</h2>
+      <div class="batch-hero-card">
+        <div class="batch-hero-top">
+          <div>
+            <span class="badge scheduled" style="background:rgba(255,255,255,0.18);color:#ffffff;border:0">Batch Record ${s.id}</span>
+            <h2 style="margin-top:6px;font-size:20px;color:#ffffff;font-weight:700">${niceDate(s.date)} · ${esc(s.time)}</h2>
+          </div>
           ${badge(s.status)}
         </div>
-        <dl class="kv">
-          <dt>${t('operator')}</dt><dd>${esc(s.operator)}</dd>
-          <dt>${t('farmerLots')}</dt><dd>${s.lots.length}</dd>
-          <dt>${t('total')} kg</dt><dd>${s.lots.reduce((n, l) => n + l.quantity, 0)} kg</dd>
-          <dt>${t('duration')}</dt><dd>${esc(s.duration || (s.startedAt ? t('inProgress') : t('notStarted')))}</dd>
-        </dl>
+
+        <div class="batch-hero-grid">
+          <div class="batch-hero-stat">
+            <small>${t('operator')}</small>
+            <strong>${esc(s.operator)}</strong>
+          </div>
+          <div class="batch-hero-stat">
+            <small>${t('total')}</small>
+            <strong>${totalKg} pcs</strong>
+          </div>
+          <div class="batch-hero-stat">
+            <small>${t('farmerLots')}</small>
+            <strong>${s.lots.length} Lots</strong>
+          </div>
+          <div class="batch-hero-stat">
+            <small>${t('duration')}</small>
+            <strong>${esc(s.duration || (s.startedAt ? t('inProgress') : t('notStarted')))}</strong>
+          </div>
+        </div>
       </div>
-      <section class="section">${heading(`${t('farmerLots')} (${s.lots.length})`)}${lotsMarkup(s, true)}</section>
-      ${actions ? `<div class="section">${actions}</div>` : ''}
-      <section class="section">${heading(t('history'))}<div class="timeline">${[...s.history].reverse().map(h => `<div><p>${esc(h.event)}</p><small>${niceTime(h.time)}</small></div>`).join('')}</div></section>
+
+      <section class="section">
+        <!-- Gate Pass & Slot Ticket Banner -->
+        <div class="card" style="background:#f5efe6;border:1px dashed #bfa895;padding:14px;gap:6px;margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:0.5px">Gate Pass & Slot Confirmation</span>
+            <span class="badge completed" style="font-size:11px">Slot Confirmed</span>
+          </div>
+          <p style="font-size:12.5px;color:var(--ink);margin:0;line-height:1.45">
+            <strong>Drop-Off Time Window:</strong> ${esc(s.dropoffWindow || '07:00 AM - 08:00 AM')} on ${niceDate(s.date)}<br>
+            <strong>Harvest Date:</strong> ${niceDate(s.harvestDate || s.date)}<br>
+            <strong>Max Tray Capacity:</strong> 8 Trays (800 pcs max) · 100 pcs per tray limit
+          </p>
+        </div>
+
+        ${heading(`${t('farmerLots')} (${s.lots.length})`)}
+        ${lotsMarkup(s, true)}
+      </section>
+
+      ${actions ? `<div class="button-row" style="margin-top:4px">${actions}</div>` : ''}
+
+      <div class="card" style="padding:18px">
+        <div class="section-heading" style="margin-bottom:12px">
+          <h2>${t('history')}</h2>
+        </div>
+        <div class="timeline">
+          ${[...s.history].reverse().map(h => `
+            <div>
+              <p style="margin:0 0 2px">${esc(h.event)}</p>
+              <small class="muted">${niceTime(h.time)}</small>
+            </div>
+          `).join('')}
+        </div>
+      </div>
     `, true, 'sessions');
   }
 
   function readingMarkup(s) {
     const r = s.reading, unavailable = !r, moistureUnavailable = !r || s.faultType === 'sensor', stale = state.offline && s.status !== 'Completed';
-    return `<div class="readings ${stale ? 'stale' : ''}">
-      <div class="reading">
+    return `<div class="readings-grid ${stale ? 'stale' : ''}">
+      <div class="reading-tile reading-tile-moisture">
         <div class="reading-ill reading-ill-moisture" aria-hidden="true">${icon('moisture')}</div>
         <strong>${moistureUnavailable ? '—' : r.moisture + '%'}</strong>
-        <small>${t('copraMoisture').replace('\n', '<br>')}</small>
+        <span>${t('copraMoisture').replace('\n', ' ')}</span>
       </div>
-      <div class="reading">
+      <div class="reading-tile reading-tile-temp">
         <div class="reading-ill reading-ill-temp" aria-hidden="true">${icon('temp')}</div>
         <strong>${unavailable ? '—' : r.temperature + '°C'}</strong>
-        <small>${t('chamberTemp').replace('\n', '<br>')}</small>
+        <span>${t('chamberTemp').replace('\n', ' ')}</span>
       </div>
-      <div class="reading">
+      <div class="reading-tile reading-tile-humidity">
         <div class="reading-ill reading-ill-humidity" aria-hidden="true">${icon('humidity')}</div>
         <strong>${unavailable ? '—' : r.humidity + '%'}</strong>
-        <small>${t('chamberHumidity').replace('\n', '<br>')}</small>
+        <span>${t('chamberHumidity').replace('\n', ' ')}</span>
       </div>
     </div>
-    <p class="fine-print">${r ? `${stale ? t('offlineReadings') : `${t('updated')} ${niceTime(r.updatedAt)}`}` : t('readingsAppear')}</p>`;
+    <small style="font-size:11.5px;text-align:right;display:block;margin-top:-2px;color:#ded0c3">
+      ${r ? `${stale ? t('offlineReadings') : `${t('updated')} ${niceTime(r.updatedAt)}`}` : t('readingsAppear')}
+    </small>`;
   }
 
   function statusScreen() {
-    return homeScreen();
+    const dryingBatches = state.sessions.filter(s => M.ACTIVE.includes(s.status));
+
+    let body = '';
+    if (dryingBatches.length) {
+      body += dryingBatches.map(s => {
+        const totalKg = s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+        const phases = ['Loading', 'Drying', 'Cooldown', 'Ready'],
+              ix = { 'Scheduled': -1, 'Loading': 0, 'Drying': 1, 'Cooldown': 2, 'Ready to unload': 3, 'Completed': 3 }[s.status];
+
+        let notice = '';
+        if (state.offline) notice = `<div class="info warning"><strong>${t('monitorOffline')}</strong>${t('monitorOfflineDesc')}</div>`;
+        else if (s.fault) notice = `<div class="info fault"><strong>${t('alert')}: ${esc(s.fault)}</strong>Check the dryer controls.</div>`;
+        else if (s.status === 'Cooldown') notice = `<div class="info warning"><strong>${t('cooldownInProgress')}</strong>${s.safeCooldown ? t('cooldownClearanceRecorded') : t('cooldownWait')}</div>`;
+        else if (s.status === 'Ready to unload') notice = `<div class="info"><strong>${t('readyToUnload')}</strong>${t('readyToUnloadNotice')}</div>`;
+        else if (s.status === 'Completed') notice = `<div class="info"><strong>${t('completed')}</strong>${t('completedNotice')}</div>`;
+        else if (s.status === 'Drying' && s.heatingPaused) notice = `<div class="info warning"><strong>${t('heatingPaused')}</strong>${t('heatingPausedDesc')}</div>`;
+        else if (s.status === 'Drying') notice = `<div class="info"><strong>${t('dryingInProgress')}</strong>${t('dryingInProgressDesc')}</div>`;
+
+        return `
+        <!-- Card 1: Brown Header & 3 Divided Status Metric Cards -->
+        <div class="batch-hero-card" style="padding:18px;gap:14px">
+          <div class="batch-hero-top" style="align-items:center">
+            <div>
+              <h2 style="margin:0;font-size:20px;color:#ffffff;font-weight:700">Batch ${s.id}</h2>
+              <p style="font-size:12px;color:#ded0c3;margin-top:2px">${niceDate(s.date)} · ${esc(s.time)}</p>
+            </div>
+            ${badge(s.status)}
+          </div>
+
+          ${readingMarkup(s)}
+        </div>
+
+        <!-- Card 2: White Progress & Details Card -->
+        <div class="card" style="padding:18px;gap:14px">
+          <div class="progress-track">
+            <div class="progress-track-header">
+              <span>${t('progress')}: <strong>${(phaseMap[phases[ix] || 'Drying'] && phaseMap[phases[ix] || 'Drying'][lang]) || phases[ix] || 'Drying'}</strong></span>
+              <span style="font-size:11.5px;color:var(--muted)">Step ${Math.max(1, ix + 1)} of 4</span>
+            </div>
+            <div class="progress-bar-segments">
+              ${phases.map((p, i) => `<div class="progress-segment ${i < ix ? 'done' : i === ix ? 'active' : ''}"></div>`).join('')}
+            </div>
+          </div>
+
+          ${notice}
+
+          <div class="batch-meta-row">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="color:var(--muted)">${t('operator')}:</span>
+              <strong>${esc(s.operator)}</strong>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="color:var(--muted)">Lots:</span>
+              <strong>${s.lots.length} (${totalKg} kg)</strong>
+            </div>
+          </div>
+
+          ${role === 'head' && s.status === 'Ready to unload' ? btn(t('recordUnloadCompletion'), 'complete', '', `data-id="${s.id}"`) : ''}
+
+          <button type="button" class="btn secondary" data-action="open-session" data-id="${s.id}" style="min-height:44px;font-size:13.5px;margin-top:2px">
+            <span>${t('viewFullDetails')}</span>
+            ${icon('right')}
+          </button>
+        </div>`;
+      }).join('');
+    } else {
+      body += `<div class="card" style="text-align:center;padding:32px 18px">
+        <h3 style="font-size:17px;margin-bottom:6px">${t('dryerIdle')}</h3>
+        <p class="card-subtitle" style="max-width:300px;margin:0 auto 16px">${t('dryerIdleDesc')}</p>
+        ${btn(`${icon('plus')} ${t('scheduleNewLoad')}`, 'new-session')}
+      </div>`;
+    }
+
+    if (role === 'head') {
+      body += btn(`${icon('plus')} ${t('scheduleNewLoad')}`, 'new-session');
+    }
+
+    return shell(t('activeDryerMonitoring'), body, false, 'status');
+  }
+
+  function getDailyCapacity(dateStr, currentEditingId = null) {
+    const daySessions = state.sessions.filter(s => s.id !== currentEditingId && s.status !== 'Completed' && s.date === dateStr);
+    let usedTrays = 0;
+    daySessions.forEach(s => {
+      s.lots.forEach(l => {
+        if (l.trays && l.trays !== 'Pending') {
+          try { usedTrays += M.trays(l.trays).length; } catch (e) { usedTrays += 2; }
+        } else {
+          usedTrays += 2;
+        }
+      });
+    });
+    const maxTrays = 8;
+    const availTrays = Math.max(0, maxTrays - usedTrays);
+    const availPcs = availTrays * 100;
+    const pctUsed = Math.min(100, Math.round((usedTrays / maxTrays) * 100));
+    return {
+      date: dateStr,
+      usedTrays,
+      availTrays,
+      availPcs,
+      pctUsed,
+      isFull: availTrays <= 0
+    };
+  }
+
+  function renderCapacitySlotPicker(selectedDateStr) {
+    const baseDate = new Date(selectedDateStr + 'T12:00:00');
+    const days = [];
+    for (let offset = 0; offset < 7; offset++) {
+      const dObj = new Date(baseDate);
+      dObj.setDate(dObj.getDate() + offset);
+      const d = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, '0')}-${String(dObj.getDate()).padStart(2, '0')}`;
+      const cap = getDailyCapacity(d, editingId);
+      days.push({ ...cap, isSelected: d === selectedDateStr });
+    }
+
+    return `
+      <div class="card" style="padding:14px;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <span style="font-size:13px;font-weight:600;color:var(--brown)">Slot Availability Overview</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="date" id="slot-custom-date" value="${selectedDateStr}" style="font-size:11.5px;padding:3px 6px;min-height:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:white;width:auto" title="Jump to custom date">
+            <button type="button" class="btn secondary" data-action="shift-slot-prev" style="width:62px;min-height:32px;height:32px;padding:0;font-size:11.5px;text-align:center" title="Previous 7 days">‹ Prev</button>
+            <button type="button" class="btn secondary" data-action="shift-slot-next" style="width:62px;min-height:32px;height:32px;padding:0;font-size:11.5px;text-align:center" title="Next 7 days">Next ›</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;width:100%">
+          ${days.map(d => {
+            const dateObj = new Date(d.date + 'T12:00:00');
+            const label = dateObj.toLocaleDateString(lang === 'fil' ? 'fil-PH' : 'en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
+            return `
+              <button type="button" class="chip-btn ${d.isSelected ? 'active' : ''}" data-action="select-date-slot" data-date="${d.date}" style="flex:none;white-space:nowrap;font-size:12px;padding:6px 12px">
+                ${label} ${d.isFull ? '(Full)' : ''}
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
   }
 
   function draftScreen() {
@@ -877,17 +1073,54 @@
       draft = {
         date: (selectedDate && selectedDate >= M.date()) ? selectedDate : M.date(1),
         time: '08:00',
+        harvestDate: (selectedDate && selectedDate >= M.date()) ? selectedDate : M.date(1),
+        dropoffWindow: '07:00 AM - 08:00 AM',
         operator: state.operators[0],
-        lots: [{ memberId: state.members.find(m => m.active)?.id || '', quantity: '', trays: '' }]
+        lots: [{ memberId: (state.members.find(m => m.active) && state.members.find(m => m.active).id) || '', quantity: '', trays: '' }]
       };
     }
 
+    const currentCap = getDailyCapacity(draft.date, editingId);
+
     return shell(editingId ? t('editLoad') : t('scheduleNewLoad'), `
       <form id="session-form" class="form">
+        <!-- 7-Day Quick Slot Selector Strip -->
+        ${renderCapacitySlotPicker(draft.date)}
+
+        <!-- Chamber Capacity Meter Bar Card -->
+        <div class="card" style="padding:14px;gap:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:13px;font-weight:600;color:var(--brown)">Chamber Capacity (${niceDate(draft.date)})</span>
+            <span class="badge ${currentCap.isFull ? 'fault' : 'scheduled'}" style="font-size:11.5px">
+              ${currentCap.isFull ? 'Full Slot' : `${currentCap.availTrays} / 8 Trays Available`}
+            </span>
+          </div>
+
+          <!-- Capacity Bar Meter -->
+          <div style="background:#efe7dc;height:8px;border-radius:4px;overflow:hidden;width:100%">
+            <div style="background:${currentCap.isFull ? 'var(--red)' : 'var(--brown)'};height:100%;width:${currentCap.pctUsed}%;border-radius:4px;transition:width 0.3s ease"></div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)">
+            <span>${currentCap.usedTrays} / 8 Trays Occupied</span>
+            <span><strong>${currentCap.availPcs.toLocaleString()} pcs</strong> max left</span>
+          </div>
+
+          ${currentCap.isFull ? `<p style="font-size:12px;color:#dc2626;margin:2px 0 0;line-height:1.35">⚠️ This chamber time slot is FULL (8/8 trays occupied). Please select an open date slot above.</p>` : ''}
+        </div>
+
         <div class="field-row">
           ${field(`<label for="load-date">${t('loadingDate')}</label>`, `<input type="date" name="date" id="load-date" value="${esc(draft.date)}" required>`)}
           ${field(`<label for="load-time">${t('time')}</label>`, `<input type="time" name="time" id="load-time" value="${esc(draft.time)}" required>`)}
         </div>
+
+        ${field(`<label for="harvest-date">Harvest & Dehusking Date</label>`, `<input type="date" name="harvestDate" id="harvest-date" value="${esc(draft.harvestDate || draft.date)}" required>`)}
+
+        <div class="field-row">
+          ${field(`<label for="dropoff-start">Drop-off Window Start</label>`, `<input type="time" name="dropoffStart" id="dropoff-start" value="${esc(draft.dropoffStart || '07:00')}" required>`)}
+          ${field(`<label for="dropoff-end">Drop-off Window End</label>`, `<input type="time" name="dropoffEnd" id="dropoff-end" value="${esc(draft.dropoffEnd || '08:00')}" required>`)}
+        </div>
+
         ${heading(`${t('farmerLots')} (${draft.lots.length})`)}
         ${draft.lots.map((l, i) => `
           <div class="lot-form">
@@ -895,34 +1128,73 @@
               <small>Lot ${i + 1}</small>
               ${draft.lots.length > 1 ? `<button type="button" class="remove-btn" data-action="remove-lot" data-index="${i}">${t('cancel')}</button>` : ''}
             </div>
-            ${field(`<label for="member-${i}">${t('farmerMember')}</label>`, `<select id="member-${i}" name="member-${i}"><option value="">${lang === 'fil' ? 'Pumili ng miyembro' : 'Select member'}</option>${optionMembers(l.memberId)}</select>`)}
+            ${field(`<label for="member-${i}">${t('farmerMember')}</label>`, `
+              <div class="autocomplete-wrapper">
+                <input id="member-${i}" name="member-${i}" type="text" class="autocomplete-input" value="${esc(memberDisplay(l.memberId))}" placeholder="${lang === 'fil' ? 'I-type ang pangalan ng magsasaka...' : 'Type farmer name or ID...'}" autocomplete="off" required>
+                <div id="autocomplete-list-${i}" class="autocomplete-list" style="display:none"></div>
+              </div>
+            `)}
             <div class="field-row">
-              ${field(`<label for="qty-${i}">${t('quantityKg')}</label>`, `<input id="qty-${i}" name="qty-${i}" type="number" min="0.01" step="0.01" value="${esc(l.quantity)}" required>`)}
-              ${field(`<label for="trays-${i}">${t('trayNumbers')}</label>`, `<input id="trays-${i}" name="trays-${i}" value="${esc(l.trays)}" placeholder="e.g. 1-2" required>`)}
+              ${field(`<label for="qty-${i}">${t('quantityKg')} <small class="muted">(${lang === 'fil' ? 'opsyonal' : 'optional'})</small></label>`, `<input id="qty-${i}" name="qty-${i}" type="number" min="0" step="1" value="${esc(l.quantity || '')}" placeholder="${lang === 'fil' ? 'e.g. 150 (opsyonal)' : 'e.g. 150 (optional)'}">`)}
+              ${field(`<label for="trays-${i}">${t('trayNumbers')} <small class="muted">(${lang === 'fil' ? 'opsyonal' : 'optional'})</small></label>`, `<input id="trays-${i}" name="trays-${i}" value="${esc(l.trays || '')}" placeholder="${lang === 'fil' ? 'e.g. 1-2 (opsyonal)' : 'e.g. 1-2 (optional)'}">`)}
             </div>
           </div>
         `).join('')}
         ${btn(`${icon('plus')} ${t('addFarmerLot')}`, 'add-lot', 'secondary')}
-        ${field(`<label for="operator">${t('assignedOperator')}</label>`, `<select id="operator" name="operator">${optionOperators(draft.operator)}</select>`)}
+        ${field(`<label>${t('assignedOperator')} <small class="muted">(${lang === 'fil' ? 'pumili ng isa o higit pa' : 'select one or more'})</small></label>`, `
+          <div class="operator-chip-group">
+            ${getOperators().map(o => {
+              const currentOps = (draft.operator || '').split(',').map(s => s.trim()).filter(Boolean);
+              const isSel = currentOps.includes(o);
+              return `
+                <button type="button" class="operator-chip ${isSel ? 'selected' : ''}" data-action="toggle-operator" data-operator="${esc(o)}">
+                  <span class="chip-check">${isSel ? '✓' : '+'}</span> ${esc(o)}
+                </button>
+              `;
+            }).join('')}
+          </div>
+          <input type="hidden" name="operators_str" id="operators-hidden-input" value="${esc(draft.operator || '')}">
+        `)}
         <p class="form-error" role="alert"></p>
-        <button class="btn" type="submit">${editingId ? t('saveChanges') : t('saveSchedule')}</button>
-        ${btn(t('cancel'), 'back', 'secondary')}
+        <div class="button-row">
+          ${btn(t('cancel'), 'back', 'secondary')}
+          <button class="btn" type="submit">${editingId ? t('saveChanges') : t('saveSchedule')}</button>
+        </div>
       </form>
     `, true, 'sessions');
+  }
+
+  function formatTime12h(timeStr) {
+    if (!timeStr) return '07:00 AM';
+    const parts = String(timeStr).split(':').map(Number);
+    const h = parts[0], m = parts[1];
+    if (isNaN(h)) return timeStr;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h % 12 || 12;
+    const minStr = String(m || 0).padStart(2, '0');
+    return `${String(hour12).padStart(2, '0')}:${minStr} ${ampm}`;
   }
 
   function readDraft() {
     const f = $('#session-form');
     if (!f) return;
     const data = new FormData(f);
+    const hiddenOp = data.get('operators_str');
+    const opsStr = hiddenOp !== null ? hiddenOp.trim() : (draft.operator || '');
+    const startTime = formatTime12h(data.get('dropoffStart') || '07:00');
+    const endTime = formatTime12h(data.get('dropoffEnd') || '08:00');
     draft = {
       ...draft,
       date: data.get('date'),
       time: data.get('time'),
-      operator: data.get('operator'),
+      harvestDate: data.get('harvestDate') || data.get('date'),
+      dropoffStart: data.get('dropoffStart') || '07:00',
+      dropoffEnd: data.get('dropoffEnd') || '08:00',
+      dropoffWindow: `${startTime} - ${endTime}`,
+      operator: opsStr,
       lots: draft.lots.map((l, i) => ({
         ...l,
-        memberId: data.get(`member-${i}`),
+        memberId: resolveMemberId(data.get(`member-${i}`)),
         quantity: data.get(`qty-${i}`),
         trays: data.get(`trays-${i}`)
       }))
@@ -937,7 +1209,7 @@
         ${state.bookings.length ? state.bookings.slice().sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).map(b => `
           <div class="card compact">
             <div class="card-top">
-              <h3>${esc(member(b.memberId)?.name)}</h3>
+              <h3>${esc(member(b.memberId) ? member(b.memberId).name : b.memberId)}</h3>
               <span class="badge ${b.sessionId ? 'completed' : 'scheduled'}">${b.sessionId ? 'Linked to session' : 'Booked'}</span>
             </div>
             <p>${niceDate(b.date)} · ${esc(b.time)} · ${b.quantity} kg</p>
@@ -988,14 +1260,14 @@
                 <small class="muted" style="font-size:12.5px">${m.id}</small>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                ${m.isOperator ? `<span class="badge in-progress" style="font-size:11px">⚙️ Operator</span>` : ''}
+                ${m.isOperator ? `<span class="badge in-progress" style="font-size:11px">Operator</span>` : ''}
                 <span class="badge ${m.active ? 'completed' : 'offline'}">${m.active ? t('activeMembers') : t('inactiveMembers')}</span>
                 <button type="button" class="edit-member-btn" data-action="edit-member" data-id="${m.id}" aria-label="${t('editMember')}">
                   ${icon('edit')}
                 </button>
               </div>
             </div>
-            ${m.phone ? `<div style="font-size:12.5px;color:var(--muted)">📞 ${esc(m.phone)}</div>` : ''}
+            ${m.phone ? `<div style="font-size:12.5px;color:var(--muted)">Phone: ${esc(m.phone)}</div>` : ''}
             <div style="font-size:12.5px;color:var(--ink);background:var(--cream);padding:8px 10px;border-radius:8px;display:flex;justify-content:space-between">
               <span>${t('totalCopraDried')}: <strong>${kg} kg</strong></span>
               <span><strong>${batches}</strong> ${t('batchesCount')}</span>
@@ -1019,7 +1291,7 @@
 
   function filteredReports() {
     const [from, to] = rangeDates();
-    let rows = state.sessions.filter(s => s.date >= from && s.date <= to);
+    let rows = state.sessions.filter(s => s.status === 'Completed' && s.date >= from && s.date <= to);
     if (reportSort === 'oldest') {
       rows.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
     } else if (reportSort === 'batch') {
@@ -1032,16 +1304,33 @@
 
   function reportsScreen() {
     const rows = filteredReports(), [from, to] = rangeDates();
-    const totalKg = rows.reduce((acc, s) => acc + s.lots.reduce((n, l) => n + l.quantity, 0), 0);
-    const completedCount = rows.filter(s => s.status === 'Completed').length;
+    const totalPcs = rows.reduce((acc, s) => acc + s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0), 0);
 
     let body = `
-      <div class="card" style="padding:14px 16px;gap:10px">
-        <div class="section-heading">
-          <label style="font-weight:600;font-size:14px">${t('filterPeriod')}</label>
-          <div style="font-size:12.5px;color:var(--muted)">${rows.length} ${rows.length === 1 ? 'record' : 'records'}</div>
+      <!-- Summary Hero Bar -->
+      <div class="batch-hero-card" style="padding:18px;gap:12px">
+        <div class="batch-hero-top" style="align-items:center">
+          <div>
+            <span class="badge scheduled" style="background:rgba(255,255,255,0.18);color:#ffffff;border:0;font-size:11.5px">${reportRange === 'all' ? t('allTime') : `${niceDate(from)} – ${niceDate(to)}`}</span>
+            <h2 style="margin-top:4px;font-size:19px;color:#ffffff;font-weight:700">${rows.length} ${rows.length === 1 ? 'Completed Batch' : 'Completed Batches'}</h2>
+          </div>
+          ${btn(`${icon('download')} PDF Report`, 'export', 'small', rows.length && from <= to ? '' : 'disabled', 'style="background:rgba(255,255,255,0.22);border:0;color:#ffffff;width:auto;padding:8px 14px;border-radius:10px"')}
         </div>
 
+        <div class="batch-hero-grid">
+          <div class="batch-hero-stat">
+            <small>${t('totalCopraDried')}</small>
+            <strong>${totalPcs.toLocaleString()} pcs</strong>
+          </div>
+          <div class="batch-hero-stat">
+            <small>Completed Operations</small>
+            <strong>${rows.length} Batches</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter Chips & Sorting Bar -->
+      <div class="card" style="padding:14px;gap:10px">
         <div class="filter-chips">
           <button type="button" class="chip-btn ${reportRange === 'today' ? 'active' : ''}" data-action="set-range" data-range="today">${t('today')}</button>
           <button type="button" class="chip-btn ${reportRange === '7' ? 'active' : ''}" data-action="set-range" data-range="7">${t('last7Days')}</button>
@@ -1051,15 +1340,15 @@
         </div>
 
         ${reportRange === 'custom' ? `
-          <div class="field-row">
+          <div class="field-row" style="margin-top:4px">
             ${field('<label for="report-from">From</label>', `<input type="date" id="report-from" value="${reportFrom}">`)}
             ${field('<label for="report-to">To</label>', `<input type="date" id="report-to" value="${reportTo}">`)}
           </div>
         ` : ''}
 
-        <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #0000000f;padding-top:10px">
-          <label for="report-sort" style="font-size:13px;font-weight:500;color:var(--muted)">${t('sortBy')}:</label>
-          <select id="report-sort" style="font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:white">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:10px;margin-top:2px">
+          <span style="font-size:12.5px;color:var(--muted);font-weight:500">${t('sortBy')}:</span>
+          <select id="report-sort" style="font-size:12.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:white;min-height:34px;width:auto">
             <option value="newest" ${reportSort === 'newest' ? 'selected' : ''}>${t('dateNewest')}</option>
             <option value="oldest" ${reportSort === 'oldest' ? 'selected' : ''}>${t('dateOldest')}</option>
             <option value="batch" ${reportSort === 'batch' ? 'selected' : ''}>${t('batchIdAsc')}</option>
@@ -1067,62 +1356,45 @@
         </div>
       </div>
 
-      <div class="pca-kpi-grid">
-        <div class="pca-kpi-card" style="padding:12px">
-          <strong>${rows.length}</strong>
-          <span>${t('batchesProcessed')} (${completedCount} done)</span>
-        </div>
-        <div class="pca-kpi-card" style="padding:12px">
-          <strong>${totalKg.toLocaleString()} kg</strong>
-          <span>${t('totalCopraDried')}</span>
-        </div>
-      </div>
+      <!-- Tabulated Records List -->
+      <section class="section">
+        ${heading(`${t('dryingRecordsTitle')} (${rows.length})`)}
+        ${rows.length ? rows.map(s => {
+          const bPcs = s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+          const memberNames = s.lots.map(l => (member(l.memberId) ? member(l.memberId).name : l.memberId)).join(', ');
+          const sampleLot = s.lots.find(l => l.sample);
+          const sampleMoisture = (sampleLot && sampleLot.sample) ? sampleLot.sample.moisture : null;
+          const moistureDisplay = sampleMoisture ? `${sampleMoisture}%` : (s.reading ? `${s.reading.moisture}%` : '6.0%');
+          const isMoistureTarget = sampleMoisture ? sampleMoisture <= 6.0 : true;
 
-      <div class="card" style="padding:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div>
-            <h3 style="font-size:15px;margin:0 0 2px">${reportRange === 'all' ? t('allTime') : `${niceDate(from)} – ${niceDate(to)}`}</h3>
-            <small class="muted" style="font-size:12px">${t('tapToView')}</small>
-          </div>
-          ${btn(`${icon('download')} ${t('downloadPdfReport')}`, 'export', 'small', rows.length && from <= to ? '' : 'disabled')}
-        </div>
+          return `
+          <div class="card click-card record-card" data-action="open-session" data-id="${s.id}" style="padding:16px;gap:10px">
+            <div class="card-top" style="align-items:flex-start">
+              <div>
+                <h3 style="font-size:16.5px;margin:0;color:var(--brown);font-weight:700">Batch ${s.id}</h3>
+                <small class="muted" style="font-size:12px">${niceDate(s.date)} · ${esc(s.time)}</small>
+              </div>
+              ${badge(s.status)}
+            </div>
 
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>${t('batchCol')}</th>
-                <th>${t('dateTimeCol')}</th>
-                <th>${t('farmersCol')}</th>
-                <th>${t('qtyCol')}</th>
-                <th>${t('operatorCol')}</th>
-                <th>${t('moistureCol')}</th>
-                <th>${t('statusCol')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.length ? rows.map(s => {
-                const bKg = s.lots.reduce((n, l) => n + l.quantity, 0);
-                const memberNames = s.lots.map(l => member(l.memberId)?.name || l.memberId).join(', ');
-                const sampleMoisture = s.lots.find(l => l.sample)?.sample?.moisture;
-                const moistureDisplay = sampleMoisture ? `<strong class="text-green">${sampleMoisture}%</strong>` : (s.reading ? `${s.reading.moisture}%` : '—');
-                return `<tr class="clickable-row" data-action="open-session" data-id="${s.id}">
-                  <td><strong>${s.id}</strong></td>
-                  <td>${niceDate(s.date)}<br><small class="muted">${esc(s.time)}</small></td>
-                  <td>
-                    <span style="font-weight:500">${esc(memberNames)}</span>
-                    <br><small class="muted">${s.lots.length} lot${s.lots.length === 1 ? '' : 's'}</small>
-                  </td>
-                  <td><strong>${bKg} kg</strong></td>
-                  <td>${esc(s.operator)}</td>
-                  <td>${moistureDisplay}</td>
-                  <td>${badge(s.status)}</td>
-                </tr>`;
-              }).join('') : `<tr><td colspan="7" style="text-align:center;padding:28px 14px;color:var(--muted)">No records found for this period.</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            <div style="font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.35;margin-top:2px">
+              ${esc(memberNames)}
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#fdfbf7;border-radius:10px;padding:9px 12px;font-size:12.5px;border:1px solid var(--line)">
+              <span>Volume: <strong>${bPcs} pcs</strong> (${s.lots.length} ${s.lots.length === 1 ? 'lot' : 'lots'})</span>
+              <span>Moisture: <strong class="${isMoistureTarget ? 'text-green' : 'error-text'}">${moistureDisplay}</strong></span>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:4px;font-size:12.5px">
+              <span class="muted">${t('operator')}: <strong style="color:var(--ink)">${esc(s.operator)}</strong></span>
+              <span style="display:flex;align-items:center;gap:3px;color:var(--brown);font-weight:600">
+                Details ${icon('right')}
+              </span>
+            </div>
+          </div>`;
+        }).join('') : empty('No completed records', 'Only completed drying batches are shown in report views.')}
+      </section>
     `;
 
     return shell(t('dryingRecordsTitle'), body, false, 'reports');
@@ -1194,7 +1466,6 @@
       </div>
 
       <div class="card">
-        ${isPca ? `<button class="list-row" data-action="nav" data-route="simulation"><span>${t('demoScenarios')}</span>${icon('right')}</button>` : ''}
         <button class="list-row" data-action="about"><span>${t('aboutCoprafy')}</span>${icon('right')}</button>
         <button class="list-row" data-action="reset"><span>${t('resetRecords')}</span>${icon('right')}</button>
       </div>
@@ -1203,38 +1474,116 @@
     `, false, 'profile');
   }
 
-  function simulationScreen() {
-    const s = session(selectedId) || active() || state.sessions[0];
-    selectedId = s.id;
-    return shell('Demo scenarios', `
-      ${field('<label for="demo-session">Simulated session</label>', `<select id="demo-session">${state.sessions.map(o => `<option value="${o.id}" ${o.id === s.id ? 'selected' : ''}>${o.id} · ${o.status}</option>`).join('')}</select>`)}
-      <div class="card">
-        <div class="card-top">
-          <h3>${s.id}</h3>
-          ${badge(s.status)}
+  function operationsScreen() {
+    let batches = state.sessions.slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+    const scheduledCount = batches.filter(s => s.status === 'Scheduled').length;
+    const activeCount = batches.filter(s => M.ACTIVE.includes(s.status)).length;
+    const completedCount = batches.filter(s => s.status === 'Completed').length;
+
+    let rows = batches.filter(s => {
+      if (operationsFilter === 'scheduled') return s.status === 'Scheduled';
+      if (operationsFilter === 'active') return M.ACTIVE.includes(s.status);
+      if (operationsFilter === 'completed') return s.status === 'Completed';
+      return true;
+    });
+
+    let body = `
+      <div class="batch-hero-card" style="padding:18px;gap:12px">
+        <div class="batch-hero-top" style="align-items:center">
+          <div>
+            <span class="badge scheduled" style="background:rgba(255,255,255,0.18);color:#ffffff;border:0;font-size:11.5px">SPF San Lorenzo Ruiz</span>
+            <h2 style="margin-top:4px;font-size:19px;color:#ffffff;font-weight:700">${t('operationsTitle')}</h2>
+          </div>
+          <div class="banner-badge" aria-hidden="true">${icon('cycle')}</div>
         </div>
-        <small class="muted">${s.fault ? esc(s.fault) : 'No active fault'} · ${state.offline ? 'Monitor offline' : 'Connected'}</small>
-        <div class="test-actions">
-          ${[['load', 'Begin loading'], ['start', 'Dryer startup'], ['cooldown', 'Reach cooldown'], ['cooled', 'Confirm cooldown'], ['door', 'Door opened'], ['sensor', 'Sensor alert'], ['airflow', 'Airflow loss'], ['overheat', 'Overtemp alert'], ['clear-fault', 'Clear alert'], ['resume', 'Resume heating'], ['offline', 'Simulate offline'], ['reconnect', 'Reconnect']].map(([a, l]) => btn(l, 'simulate', 'secondary', `data-event="${a}" data-id="${s.id}"`)).join('')}
+
+        <div class="batch-hero-grid">
+          <div class="batch-hero-stat">
+            <small>Active Operations</small>
+            <strong>${activeCount} Running</strong>
+          </div>
+          <div class="batch-hero-stat">
+            <small>Total Batches</small>
+            <strong>${batches.length} Batches</strong>
+          </div>
         </div>
       </div>
-      ${btn('View monitoring', 'open-status', '', `data-id="${s.id}"`)}
-    `, true, 'profile');
+
+      <div class="card" style="padding:12px 14px;gap:10px">
+        <div class="filter-chips">
+          <button type="button" class="chip-btn ${operationsFilter === 'all' ? 'active' : ''}" data-action="filter-operations" data-filter="all">All (${batches.length})</button>
+          <button type="button" class="chip-btn ${operationsFilter === 'scheduled' ? 'active' : ''}" data-action="filter-operations" data-filter="scheduled">Scheduled (${scheduledCount})</button>
+          <button type="button" class="chip-btn ${operationsFilter === 'active' ? 'active' : ''}" data-action="filter-operations" data-filter="active">Active (${activeCount})</button>
+          <button type="button" class="chip-btn ${operationsFilter === 'completed' ? 'active' : ''}" data-action="filter-operations" data-filter="completed">Completed (${completedCount})</button>
+        </div>
+      </div>
+
+      <section class="section">
+        ${heading(`Facility Operations (${rows.length})`)}
+        ${rows.length ? rows.map(s => {
+          const totalPcs = s.lots.reduce((n, l) => n + (Number(l.quantity) || 0), 0);
+          const farmerNames = s.lots.map(l => (member(l.memberId) ? member(l.memberId).name : l.memberId)).join(', ');
+          return `
+          <div class="card click-card record-card" data-action="open-session" data-id="${s.id}" style="padding:16px;gap:10px">
+            <div class="card-top" style="align-items:flex-start">
+              <div>
+                <h3 style="font-size:16.5px;margin:0;color:var(--brown);font-weight:700">Batch ${s.id}</h3>
+                <small class="muted" style="font-size:12px">${niceDate(s.date)} · ${esc(s.time)}</small>
+              </div>
+              ${badge(s.status)}
+            </div>
+
+            <div style="font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.35;margin-top:2px">
+              ${esc(farmerNames)}
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#fdfbf7;border-radius:10px;padding:9px 12px;font-size:12.5px;border:1px solid var(--line)">
+              <span>Total Volume: <strong>${totalPcs > 0 ? totalPcs.toLocaleString() + ' pcs' : 'Pending'}</strong></span>
+              <span>Farmer-Lots: <strong>${s.lots.length}</strong></span>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:4px;font-size:12.5px">
+              <span class="muted">${t('operator')}: <strong style="color:var(--ink)">${esc(s.operator)}</strong></span>
+              <span style="display:flex;align-items:center;gap:3px;color:var(--brown);font-weight:600">
+                Details ${icon('right')}
+              </span>
+            </div>
+          </div>`;
+        }).join('') : empty('No operations found', 'No drying operations match the selected filter.')}
+      </section>
+    `;
+
+    return shell(t('navOperations'), body, false, 'operations');
   }
 
   function render() {
-    const routes = {
-      roles: rolesScreen, login: loginScreen, home: homeScreen,
-      sessions: sessionsScreen, detail: detailScreen, status: statusScreen,
-      draft: draftScreen, bookings: bookingsScreen, members: membersScreen,
-      reports: reportsScreen, alerts: alertsScreen, profile: profileScreen,
-      simulation: simulationScreen
-    };
-    if (!role && !['roles', 'login'].includes(route)) route = 'roles';
-    if (role === 'head' && ['members', 'reports', 'simulation'].includes(route)) route = 'home';
-    if (role === 'pca' && ['draft', 'bookings', 'sessions'].includes(route)) route = 'reports';
-    $('#app').innerHTML = (routes[route] || homeScreen)();
-    window.scrollTo(0, 0);
+    try {
+      const routes = {
+        roles: rolesScreen, login: loginScreen, home: homeScreen,
+        sessions: sessionsScreen, detail: detailScreen, status: statusScreen,
+        draft: draftScreen, bookings: bookingsScreen, members: membersScreen,
+        reports: reportsScreen, alerts: alertsScreen, profile: profileScreen,
+        operations: operationsScreen
+      };
+      if (!role && !['roles', 'login'].includes(route)) route = 'roles';
+      if (role === 'head' && ['members', 'reports', 'operations'].includes(route)) route = 'home';
+      if (role === 'pca' && ['draft', 'bookings', 'sessions'].includes(route)) route = 'reports';
+      const appEl = $('#app');
+      if (appEl) {
+        appEl.innerHTML = (routes[route] || rolesScreen)();
+      }
+      window.scrollTo(0, 0);
+    } catch (err) {
+      console.error('Render error caught, resetting state:', err);
+      try {
+        state = M.seed();
+        role = null;
+        route = 'roles';
+        save();
+        const appEl = $('#app');
+        if (appEl) appEl.innerHTML = rolesScreen();
+      } catch (_) {}
+    }
   }
 
   function openMember(id) {
@@ -1246,21 +1595,31 @@
         <label class="check" style="margin-top:4px"><input name="isOperator" type="checkbox" ${m.isOperator ? 'checked' : ''}> ${t('designateOperator')}</label>
         ${id ? `<label class="check"><input name="active" type="checkbox" ${m.active ? 'checked' : ''}> ${t('activeStatus')}</label>` : ''}
         <p class="form-error" role="alert"></p>
-        <button type="submit" class="btn">${t('saveMember')}</button>
+        <div class="button-row">
+          ${btn(t('cancel'), 'close-modal', 'secondary')}
+          <button type="submit" class="btn">${t('saveMember')}</button>
+        </div>
       </form>
     `);
   }
 
   function openSample(id, lotId) {
     const s = session(id), l = s.lots.find(l => l.id === lotId);
+    const autoMoisture = (l.sample && l.sample.moisture !== undefined) ? l.sample.moisture : (s.estimatedMoisture !== undefined ? s.estimatedMoisture : 5.8);
     modal(t('recordSample'), `
-      <p><strong>${esc(member(l.memberId)?.name)}</strong> · Lot ${l.id}</p>
+      <p><strong>${esc(member(l.memberId) ? member(l.memberId).name : l.memberId)}</strong> · Lot ${l.id}</p>
+      <div style="background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:12px">
+        ${lang === 'fil' ? 'Awtomatikong naitala ang moisture mula sa konektadong pasilidad matapos ang drying.' : 'Moisture content automatically recorded from connected facility upon drying completion.'}
+      </div>
       <form id="sample-form" class="form" data-id="${id}" data-lot="${lotId}">
-        ${field(`<label for="sample-value">${t('sampleMoisturePercent')}</label>`, `<input id="sample-value" name="moisture" type="number" min="0.01" max="100" step="0.01" value="${l.sample?.moisture ?? ''}" placeholder="e.g. 5.8" required>`)}
-        ${field(`<label for="sample-note">${t('notes')}</label>`, `<textarea id="sample-note" name="note" placeholder="${lang === 'fil' ? 'Puna o obserbasyon' : 'Any observation'}">${esc(l.sample?.note || '')}</textarea>`)}
+        ${field(`<label for="sample-value">${t('sampleMoisturePercent')}</label>`, `<input id="sample-value" name="moisture" type="number" min="0.01" max="100" step="0.01" value="${autoMoisture}" placeholder="e.g. 5.8" required>`)}
+        ${field(`<label for="sample-note">${t('notes')}</label>`, `<textarea id="sample-note" name="note" placeholder="${lang === 'fil' ? 'Puna o obserbasyon' : 'Any observation'}">${esc((l.sample && l.sample.note) ? l.sample.note : '')}</textarea>`)}
         <small class="muted">${lang === 'fil' ? 'Target moisture ay ≤6%. Ang lampas sa 6% ay kailangang patuyuin pa.' : 'Target moisture is ≤6%. Batches above 6% require further drying.'}</small>
         <p class="form-error" role="alert"></p>
-        <button type="submit" class="btn">${t('saveSampleResult')}</button>
+        <div class="button-row">
+          ${btn(t('cancel'), 'close-modal', 'secondary')}
+          <button type="submit" class="btn">${t('saveSampleResult')}</button>
+        </div>
       </form>
     `);
   }
@@ -1268,15 +1627,23 @@
   function openBooking() {
     modal('Schedule farmer-member', `
       <form id="booking-form" class="form">
-        ${field('<label for="booking-member">Farmer-member</label>', `<select id="booking-member" name="memberId">${optionMembers('')}</select>`)}
+        ${field('<label for="booking-member">Farmer-member</label>', `
+          <div class="autocomplete-wrapper">
+            <input id="booking-member" name="memberId" type="text" class="autocomplete-input" placeholder="${lang === 'fil' ? 'I-type ang pangalan ng magsasaka...' : 'Type farmer name or ID...'}" autocomplete="off" required>
+            <div id="booking-autocomplete-list" class="autocomplete-list" style="display:none"></div>
+          </div>
+        `)}
         <div class="field-row">
           ${field('<label for="booking-date">Date</label>', `<input type="date" id="booking-date" name="date" value="${M.date(1)}" min="${M.date()}" required>`)}
           ${field('<label for="booking-time">Time</label>', '<input type="time" name="time" id="booking-time" value="08:00" required>')}
         </div>
-        ${field('<label for="booking-qty">Quantity (kg)</label>', '<input type="number" name="quantity" id="booking-qty" min="0.01" step="0.01" required>')}
+        ${field('<label for="booking-qty">' + t('quantityKg') + '</label>', '<input type="number" name="quantity" id="booking-qty" min="0.01" step="0.01" required>')}
         ${field('<label for="booking-notes">Notes (optional)</label>', '<textarea id="booking-notes" name="notes"></textarea>')}
         <p class="form-error" role="alert"></p>
-        <button type="submit" class="btn">Save booking</button>
+        <div class="button-row">
+          ${btn(t('cancel'), 'close-modal', 'secondary')}
+          <button type="submit" class="btn">Save booking</button>
+        </div>
       </form>
     `);
   }
@@ -1331,12 +1698,60 @@
   }
 
   document.addEventListener('click', e => {
+    if (!e.target.closest('.autocomplete-wrapper')) {
+      document.querySelectorAll('.autocomplete-list').forEach(l => l.style.display = 'none');
+    }
+
     const el = e.target.closest('[data-action]');
     if (!el || el.disabled) return;
     const a = el.dataset.action;
 
     try {
-      if (a === 'choose-role') {
+      if (a === 'toggle-operator') {
+        const op = el.dataset.operator;
+        let currentOps = (draft.operator || '').split(',').map(s => s.trim()).filter(Boolean);
+        if (currentOps.includes(op)) {
+          currentOps = currentOps.filter(o => o !== op);
+        } else {
+          currentOps.push(op);
+        }
+        draft.operator = currentOps.join(', ');
+        el.classList.toggle('selected', currentOps.includes(op));
+        const checkSpan = el.querySelector('.chip-check');
+        if (checkSpan) checkSpan.textContent = currentOps.includes(op) ? '✓' : '+';
+        const hidden = $('#operators-hidden-input');
+        if (hidden) hidden.value = draft.operator;
+        return;
+      } else if (a === 'select-member-option') {
+        const input = $('#' + el.dataset.inputId);
+        if (input) {
+          input.value = `${el.dataset.memberName} · ${el.dataset.memberId}`;
+          const listContainer = input.parentElement.querySelector('.autocomplete-list');
+          if (listContainer) listContainer.style.display = 'none';
+        }
+        return;
+      } else if (a === 'select-date-slot') {
+        draft.date = el.dataset.date;
+        draft.harvestDate = el.dataset.date;
+        render();
+        return;
+      } else if (a === 'shift-slot-prev') {
+        const cur = new Date(draft.date + 'T12:00:00');
+        cur.setDate(cur.getDate() - 7);
+        const y = cur.getFullYear(), m = String(cur.getMonth() + 1).padStart(2, '0'), d = String(cur.getDate()).padStart(2, '0');
+        draft.date = `${y}-${m}-${d}`;
+        draft.harvestDate = draft.date;
+        render();
+        return;
+      } else if (a === 'shift-slot-next') {
+        const cur = new Date(draft.date + 'T12:00:00');
+        cur.setDate(cur.getDate() + 7);
+        const y = cur.getFullYear(), m = String(cur.getMonth() + 1).padStart(2, '0'), d = String(cur.getDate()).padStart(2, '0');
+        draft.date = `${y}-${m}-${d}`;
+        draft.harvestDate = draft.date;
+        render();
+        return;
+      } else if (a === 'choose-role') {
         chosenRole = el.dataset.role;
         go('login');
       } else if (a === 'change-role') {
@@ -1345,8 +1760,8 @@
         render();
       } else if (a === 'nav') {
         if (el.dataset.route === 'status') {
-          selectedId = active()?.id || state.sessions[0]?.id;
-          go('home');
+          selectedId = (active() ? active().id : (state.sessions[0] ? state.sessions[0].id : 'S0231'));
+          go('status');
           return;
         }
         go(el.dataset.route);
@@ -1360,7 +1775,7 @@
         go('detail', el.dataset.id);
       } else if (a === 'open-status') {
         if (el.dataset.id) selectedId = el.dataset.id;
-        go('home', el.dataset.id);
+        go('status', el.dataset.id);
       } else if (a === 'set-lang') {
         const nextLang = el.dataset.lang;
         if (nextLang && nextLang !== lang) {
@@ -1371,11 +1786,12 @@
         }
       } else if (a === 'new-session') {
         editingId = null;
+        const activeMember = state.members.find(m => m.active);
         draft = {
           date: (selectedDate && selectedDate >= M.date()) ? selectedDate : M.date(1),
           time: '08:00',
           operator: state.operators[0],
-          lots: [{ memberId: state.members.find(m => m.active)?.id || '', quantity: '', trays: '' }]
+          lots: [{ memberId: activeMember ? activeMember.id : '', quantity: '', trays: '' }]
         };
         go('draft');
       } else if (a === 'edit-session') {
@@ -1402,6 +1818,9 @@
         render();
       } else if (a === 'filter-members') {
         memberFilter = el.dataset.filter;
+        render();
+      } else if (a === 'filter-operations') {
+        operationsFilter = el.dataset.filter;
         render();
       } else if (a === 'set-range') {
         reportRange = el.dataset.range;
@@ -1445,7 +1864,10 @@
           <form id="operator-form" class="form" data-id="${s.id}">
             ${field(`<label for="new-operator">${t('operator')}</label>`, `<select name="operator" id="new-operator">${optionOperators(s.operator)}</select>`)}
             <p class="form-error" role="alert"></p>
-            <button type="submit" class="btn">${t('saveChanges')}</button>
+            <div class="button-row">
+              ${btn(t('cancel'), 'close-modal', 'secondary')}
+              <button type="submit" class="btn">${t('saveChanges')}</button>
+            </div>
           </form>
         `);
       } else if (a === 'complete') {
@@ -1455,7 +1877,10 @@
           <form id="complete-form" class="form" data-id="${s.id}">
             <label class="check"><input type="checkbox" name="confirmed" required> ${t('confirmUnloaded')}</label>
             <p class="form-error" role="alert"></p>
-            <button type="submit" class="btn">${t('completeSessionRecord')}</button>
+            <div class="button-row">
+              ${btn(t('cancel'), 'close-modal', 'secondary')}
+              <button type="submit" class="btn">${t('completeSessionRecord')}</button>
+            </div>
           </form>
         `);
       } else if (a === 'export') {
@@ -1478,11 +1903,59 @@
         closeModal();
         render();
         toast('Demo records reset.');
+      } else if (a === 'confirm-save-session') {
+        const s = M.saveSession(state, role, draft, editingId);
+        save();
+        closeModal();
+        route = 'detail';
+        selectedId = s.id;
+        draft = null;
+        editingId = null;
+        render();
+        toast(lang === 'fil' ? 'Matagumpay na nai-iskedyul ang karga.' : 'Load scheduled successfully.');
+      } else if (a === 'confirm-save-member') {
+        if (pendingSaveMemberData) {
+          M.saveMember(state, role, pendingSaveMemberData, pendingSaveMemberData.id);
+          pendingSaveMemberData = null;
+          save();
+          closeModal();
+          render();
+          toast(lang === 'fil' ? 'Nai-save ang miyembro.' : 'Member saved.');
+        }
+      } else if (a === 'confirm-save-booking') {
+        if (pendingSaveBookingData) {
+          M.saveBooking(state, role, pendingSaveBookingData);
+          pendingSaveBookingData = null;
+          save();
+          closeModal();
+          render();
+          toast(lang === 'fil' ? 'Nai-save ang booking ng miyembro.' : 'Member booked successfully.');
+        }
+      } else if (a === 'confirm-save-sample') {
+        if (pendingSaveSampleData) {
+          const result = M.sample(state, role, pendingSaveSampleData.id, pendingSaveSampleData.lotId, pendingSaveSampleData.moisture, pendingSaveSampleData.note);
+          pendingSaveSampleData = null;
+          save();
+          closeModal();
+          render();
+          toast(result.accepted ? (lang === 'fil' ? 'Tanggap ang sample ng moisture (tuyo na).' : 'Moisture sample accepted.') : (lang === 'fil' ? 'Mataas pa sa target ang moisture (kailangan pang patuyuin).' : 'Sample above target (needs further drying).'));
+        }
+      } else if (a === 'confirm-save-operator') {
+        if (pendingSaveOperatorData) {
+          M.assignOperator(state, role, pendingSaveOperatorData.id, pendingSaveOperatorData.operator);
+          pendingSaveOperatorData = null;
+          save();
+          closeModal();
+          render();
+          toast(lang === 'fil' ? 'Nai-update ang nakatalagang operator.' : 'Operator updated successfully.');
+        }
       }
     } catch (err) {
       toast(err.message);
     }
   });
+
+  let pendingSaveMemberData = null, pendingSaveBookingData = null, pendingSaveSampleData = null, pendingSaveOperatorData = null;
 
   document.addEventListener('submit', e => {
     e.preventDefault();
@@ -1495,43 +1968,70 @@
         role = chosenRole;
         route = 'home';
         stack = [];
-        selectedId = active()?.id || 'S0231';
+        selectedId = active() ? active().id : 'S0231';
         save();
         render();
       } else if (f.id === 'session-form') {
         readDraft();
-        const s = M.saveSession(state, role, draft, editingId);
-        save();
-        route = 'detail';
-        selectedId = s.id;
-        draft = null;
-        editingId = null;
-        render();
-        toast(lang === 'fil' ? 'Matagumpay na nai-iskedyul ang karga.' : 'Load scheduled successfully.');
+        const cap = getDailyCapacity(draft.date, editingId);
+        if (cap.isFull) {
+          throw Error(lang === 'fil' ? 'Puno na ang slot para sa napiling petsa (8/8 trays occupied). Pumili ng ibang petsa sa itaas.' : 'This chamber time slot is FULL (8/8 trays occupied). Please select an available date slot above.');
+        }
+        if (!draft.date) throw Error(lang === 'fil' ? 'Pumili ng petsa ng pagkarga.' : 'Please select a loading date.');
+        if (!draft.time) throw Error(lang === 'fil' ? 'Pumili ng oras ng pagkarga.' : 'Please select a loading time.');
+        if (!draft.operator) throw Error(lang === 'fil' ? 'Pumili ng kahit isang nakatalagang operator.' : 'Please select at least one assigned operator.');
+        draft.lots.forEach((l, i) => {
+          if (!l.memberId) throw Error(lang === 'fil' ? `Pumili ng rehistradong magsasaka para sa Lot ${i + 1}.` : `Please select a registered farmer-member for Lot ${i + 1}.`);
+          if (!member(l.memberId)) throw Error(lang === 'fil' ? `Ang napiling magsasaka sa Lot ${i + 1} ay hindi rehistrado.` : `The farmer-member selected for Lot ${i + 1} is not registered.`);
+        });
+        M.validateSession(state, draft, editingId);
+        modal(
+          lang === 'fil' ? 'Kumpirmahin ang Iskedyul' : 'Confirm Load Schedule',
+          `<p style="font-size:13.5px;color:var(--ink);line-height:1.5">${lang === 'fil' ? `Sigurado ka bang gusto mong i-save ang iskedyul ng karga para sa <strong>${niceDate(draft.date)}</strong>?` : `Are you sure you want to save the load schedule for <strong>${niceDate(draft.date)}</strong>?`}</p>`,
+          `<div class="button-row">${btn(t('cancel'), 'close-modal', 'secondary')}${btn(lang === 'fil' ? 'Kumpirmahin at I-save' : 'Confirm & Save Schedule', 'confirm-save-session')}</div>`
+        );
       } else if (f.id === 'member-form') {
-        M.saveMember(state, role, { name: data.get('name'), phone: data.get('phone'), active: f.dataset.id ? data.has('active') : true, isOperator: data.has('isOperator') }, f.dataset.id || null);
-        save();
-        closeModal();
-        render();
-        toast('Member saved.');
+        const name = (data.get('name') || '').trim();
+        if (!name) throw Error(lang === 'fil' ? 'Kailangan ang buong pangalan ng magsasaka.' : 'Please enter the member full name.');
+        pendingSaveMemberData = { name, phone: data.get('phone'), active: f.dataset.id ? data.has('active') : true, isOperator: data.has('isOperator'), id: f.dataset.id || null };
+        modal(
+          lang === 'fil' ? 'Kumpirmahin ang Miyembro' : 'Confirm Member Save',
+          `<p style="font-size:13.5px;color:var(--ink);line-height:1.5">${lang === 'fil' ? `Sigurado ka bang gusto mong i-save si <strong>${esc(name)}</strong>?` : `Are you sure you want to save farmer-member <strong>${esc(name)}</strong>?`}</p>`,
+          `<div class="button-row">${btn(t('cancel'), 'close-modal', 'secondary')}${btn(lang === 'fil' ? 'Kumpirmahin at I-save' : 'Confirm & Save Member', 'confirm-save-member')}</div>`
+        );
       } else if (f.id === 'booking-form') {
-        M.saveBooking(state, role, Object.fromEntries(data));
-        save();
-        closeModal();
-        render();
-        toast('Member booked.');
+        const payload = Object.fromEntries(data);
+        const memberId = resolveMemberId(payload.memberId);
+        if (!memberId || !member(memberId)) throw Error(lang === 'fil' ? 'Pumili ng rehistradong magsasaka.' : 'Please select a valid registered farmer-member.');
+        if (!payload.quantity || isNaN(Number(payload.quantity)) || Number(payload.quantity) <= 0) throw Error(lang === 'fil' ? 'Maglagay ng tamang dami.' : 'Please enter a valid quantity greater than zero.');
+        pendingSaveBookingData = { ...payload, memberId };
+        const memberObj = member(memberId);
+        const memberName = memberObj ? memberObj.name : memberId;
+        modal(
+          lang === 'fil' ? 'Kumpirmahin ang Booking' : 'Confirm Member Booking',
+          `<p style="font-size:13.5px;color:var(--ink);line-height:1.5">${lang === 'fil' ? `Sigurado ka bang gusto mong i-save ang booking para kay <strong>${esc(memberName)}</strong>?` : `Are you sure you want to save member booking for <strong>${esc(memberName)}</strong>?`}</p>`,
+          `<div class="button-row">${btn(t('cancel'), 'close-modal', 'secondary')}${btn(lang === 'fil' ? 'Kumpirmahin at I-save' : 'Confirm & Save Booking', 'confirm-save-booking')}</div>`
+        );
       } else if (f.id === 'sample-form') {
-        const result = M.sample(state, role, f.dataset.id, f.dataset.lot, data.get('moisture'), data.get('note'));
-        save();
-        closeModal();
-        render();
-        toast(result.accepted ? (lang === 'fil' ? 'Tanggap ang sample ng moisture (tuyo na).' : 'Moisture sample accepted.') : (lang === 'fil' ? 'Mataas pa sa target ang moisture (kailangan pang patuyuin).' : 'Sample above target (needs further drying).'));
+        const moistureVal = Number(data.get('moisture'));
+        if (!data.get('moisture') || isNaN(moistureVal) || moistureVal <= 0 || moistureVal > 100) throw Error(lang === 'fil' ? 'Maglagay ng moisture sa pagitan ng 0.1% at 100%.' : 'Please enter a valid sample moisture percentage between 0.1% and 100%.');
+        pendingSaveSampleData = { id: f.dataset.id, lotId: f.dataset.lot, moisture: data.get('moisture'), note: data.get('note') };
+        modal(
+          lang === 'fil' ? 'Kumpirmahin ang Sample' : 'Confirm Sample Result',
+          `<p style="font-size:13.5px;color:var(--ink);line-height:1.5">${lang === 'fil' ? `Sigurado ka bang gusto mong itala ang <strong>${moistureVal}%</strong> moisture para sa Lot ${f.dataset.lot}?` : `Are you sure you want to record <strong>${moistureVal}%</strong> sample moisture for Lot ${f.dataset.lot}?`}</p>`,
+          `<div class="button-row">${btn(t('cancel'), 'close-modal', 'secondary')}${btn(lang === 'fil' ? 'Kumpirmahin at Itala' : 'Confirm & Record Sample', 'confirm-save-sample')}</div>`
+        );
       } else if (f.id === 'operator-form') {
-        M.assignOperator(state, role, f.dataset.id, data.get('operator'));
-        save();
-        closeModal();
-        render();
-        toast(lang === 'fil' ? 'Nai-update ang nakatalagang operator.' : 'Operator updated.');
+        const opVal = data.get('operator');
+        if (!opVal || !String(opVal).trim()) {
+          throw Error(lang === 'fil' ? 'Pumili ng kahit isang nakatalagang operator.' : 'Please select at least one assigned operator.');
+        }
+        pendingSaveOperatorData = { id: f.dataset.id, operator: opVal };
+        modal(
+          lang === 'fil' ? 'Kumpirmahin ang Operator' : 'Confirm Operator Assignment',
+          `<p style="font-size:13.5px;color:var(--ink);line-height:1.5">${lang === 'fil' ? `Sigurado ka bang gusto mong italaga si <strong>${esc(opVal)}</strong> bilang operator?` : `Are you sure you want to assign operator <strong>${esc(opVal)}</strong>?`}</p>`,
+          `<div class="button-row">${btn(t('cancel'), 'close-modal', 'secondary')}${btn(lang === 'fil' ? 'Kumpirmahin at Italaga' : 'Confirm & Assign Operator', 'confirm-save-operator')}</div>`
+        );
       } else if (f.id === 'complete-form') {
         M.complete(state, role, f.dataset.id, data.has('confirmed'));
         save();
@@ -1567,10 +2067,30 @@
     } else if (t.id === 'report-sort') {
       reportSort = t.value;
       render();
+    } else if (t.id === 'slot-custom-date') {
+      draft.date = t.value;
+      draft.harvestDate = t.value;
+      render();
     }
   });
 
   document.addEventListener('input', e => {
+    if (e.target.classList.contains('autocomplete-input')) {
+      const input = e.target;
+      const query = input.value.trim().toLowerCase();
+      const listContainer = input.parentElement.querySelector('.autocomplete-list');
+      if (listContainer) {
+        const matches = state.members.filter(m => m.active && (m.name.toLowerCase().includes(query) || m.id.toLowerCase().includes(query)));
+        if (matches.length) {
+          listContainer.innerHTML = matches.map(m => `
+            <div class="autocomplete-option" data-action="select-member-option" data-input-id="${input.id}" data-member-id="${m.id}" data-member-name="${esc(m.name)}">${esc(m.name)} (${m.id})</div>
+          `).join('');
+          listContainer.style.display = 'block';
+        } else {
+          listContainer.style.display = 'none';
+        }
+      }
+    }
     if (e.target.id === 'member-search') {
       memberSearch = e.target.value;
       const at = e.target.selectionStart;
@@ -1578,6 +2098,23 @@
       const t = $('#member-search');
       t.focus();
       t.setSelectionRange(at, at);
+    }
+  });
+
+  document.addEventListener('focusin', e => {
+    if (e.target.classList.contains('autocomplete-input')) {
+      const input = e.target;
+      const query = input.value.trim().toLowerCase();
+      const listContainer = input.parentElement.querySelector('.autocomplete-list');
+      if (listContainer) {
+        const matches = state.members.filter(m => m.active && (m.name.toLowerCase().includes(query) || m.id.toLowerCase().includes(query) || !query));
+        if (matches.length) {
+          listContainer.innerHTML = matches.map(m => `
+            <div class="autocomplete-option" data-action="select-member-option" data-input-id="${input.id}" data-member-id="${m.id}" data-member-name="${esc(m.name)}">${esc(m.name)} (${m.id})</div>
+          `).join('');
+          listContainer.style.display = 'block';
+        }
+      }
     }
   });
 

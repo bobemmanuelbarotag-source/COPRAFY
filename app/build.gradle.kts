@@ -35,3 +35,7 @@ kotlin {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
+
+dependencies {
+    implementation("androidx.webkit:webkit:1.12.1")
+}

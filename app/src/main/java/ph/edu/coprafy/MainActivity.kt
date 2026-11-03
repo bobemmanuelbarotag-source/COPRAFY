@@ -19,9 +19,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 
 /** Offline Kotlin Android container for the COPRAFY HCI interface. */
 @Suppress("DEPRECATION")
@@ -57,55 +57,43 @@ class MainActivity : Activity() {
         browser.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            allowFileAccess = false
-            allowContentAccess = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            allowFileAccess = true
+            allowContentAccess = true
+            allowFileAccessFromFileURLs = true
+            allowUniversalAccessFromFileURLs = true
+            databaseEnabled = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             builtInZoomControls = false
+            displayZoomControls = false
+            useWideViewPort = false
+            loadWithOverviewMode = false
         }
+        browser.webChromeClient = android.webkit.WebChromeClient()
         browser.setBackgroundColor(Color.WHITE)
+
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
         browser.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView, request: WebResourceRequest
-            ): WebResourceResponse {
-                val uri = request.url
-                if (uri.scheme != "https" || uri.host != HOST) return missing()
-                val path = uri.path ?: return missing()
-                if (!path.startsWith("/assets/")) return missing()
-                val name = path.removePrefix("/assets/")
-                if (name !in ASSETS) return missing()
-                val mime = when {
-                    name.endsWith(".js") -> "text/javascript"
-                    name.endsWith(".css") -> "text/css"
-                    name.endsWith(".png") -> "image/png"
-                    name.endsWith(".ttf") -> "font/ttf"
-                    else -> "text/html"
-                }
-                return try {
-                    WebResourceResponse(
-                        mime, if (name.endsWith(".png") || name.endsWith(".ttf")) null else "UTF-8", assets.open(name)
-                    )
-                } catch (_: Exception) {
-                    missing()
-                }
+            ): WebResourceResponse? {
+                return assetLoader.shouldInterceptRequest(request.url)
             }
 
             override fun shouldOverrideUrlLoading(
                 view: WebView, request: WebResourceRequest
             ): Boolean {
-                // In-page navigation only: external pages cannot access the native bridge.
-                return request.url.toString() != HOME
+                return false
             }
         }
         browser.addJavascriptInterface(ReportBridge(), "NativeCoprafy")
-        browser.loadUrl(HOME)
+        browser.loadUrl("https://appassets.androidplatform.net/assets/index.html")
     }
 
-    private fun missing() = WebResourceResponse(
-        "text/plain", "UTF-8", 404, "Not found", null,
-        ByteArrayInputStream("Not found".toByteArray(Charsets.UTF_8))
-    )
-
     inner class ReportBridge {
+        @Suppress("unused")
         @JavascriptInterface
         fun exportPdf(payload: String) {
             runOnUiThread {
@@ -179,8 +167,8 @@ class MainActivity : Activity() {
     private fun writeReport(uri: Uri, source: JSONArray) {
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(48, 40, 34)
-            textSize = 10.5f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textSize = 10f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
         }
         val lines = mutableListOf<String>()
         for (index in 0 until source.length()) {
@@ -247,12 +235,6 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        const val HOST = "appassets.androidplatform.net"
-        const val HOME = "https://$HOST/assets/index.html"
         const val SAVE_PDF = 41
-        val ASSETS = setOf(
-            "index.html", "styles.css", "model.js", "app.js", "logo.png",
-            "Poppins-Regular.ttf", "Poppins-Medium.ttf", "Poppins-SemiBold.ttf", "Poppins-Bold.ttf"
-        )
     }
 }
